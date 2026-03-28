@@ -1,0 +1,301 @@
+---
+title: "MCP Fundamentals"
+description: "What the Model Context Protocol is, how JSON-RPC transport works, and the three core primitives: tools, resources, and prompts."
+estimatedMinutes: 25
+domain: 2
+---
+
+The **Model Context Protocol (MCP)** is an open standard that defines how AI models communicate with external systems. Rather than every integration being custom-coded, MCP provides a uniform protocol: the host (Claude) speaks MCP, and any compliant server plugs in automatically.
+
+## Why MCP Exists
+
+Before MCP, every Claude integration required bespoke tool definitions, custom serialization, and hand-written dispatch logic. MCP standardizes all of this:
+
+| Without MCP | With MCP |
+|---|---|
+| Custom tool schema per integration | Uniform `tools/list` discovery |
+| Ad-hoc serialization format | JSON-RPC 2.0 everywhere |
+| No capability negotiation | `initialize` handshake declares features |
+| Single-process only | Stdio, HTTP/SSE, or custom transports |
+| No resource access pattern | First-class `resources` primitive |
+
+---
+
+## The Three Primitives
+
+MCP defines exactly three things a server can expose:
+
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">MCP Server Primitives</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-purple-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-mono text-purple-400 font-semibold w-1/5">Primitive</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-2/5">Purpose</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-2/5">Example</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-purple-400 font-semibold">tools</td>
+        <td className="px-4 py-3 text-muted-foreground">Actions Claude can invoke — have side effects</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">create_issue, send_email, run_query</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-purple-400 font-semibold">resources</td>
+        <td className="px-4 py-3 text-muted-foreground">Read-only data Claude can fetch into context</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">file://readme.md, db://users/123</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-purple-400 font-semibold">prompts</td>
+        <td className="px-4 py-3 text-muted-foreground">Reusable prompt templates with arguments</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">summarize_document, code_review</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<ExamTip>
+The exam tests the distinction between **tools** and **resources**. Tools are for actions that may have side effects (writes, API calls, mutations). Resources are for read-only data retrieval. If you need to fetch a file for context, use a resource. If you need to write a file, use a tool.
+</ExamTip>
+
+---
+
+## Transport Layer: JSON-RPC 2.0
+
+All MCP communication uses **JSON-RPC 2.0** — a lightweight remote procedure call protocol over a transport of your choice.
+
+```json
+// Client → Server: a tool call request
+{
+  "jsonrpc": "2.0",
+  "id": "req-001",
+  "method": "tools/call",
+  "params": {
+    "name": "search_issues",
+    "arguments": {
+      "query": "authentication bug",
+      "limit": 10
+    }
+  }
+}
+
+// Server → Client: the tool result
+{
+  "jsonrpc": "2.0",
+  "id": "req-001",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "[{\"id\": 42, \"title\": \"Auth token expiry bug\", \"status\": \"open\"}]"
+      }
+    ],
+    "isError": false
+  }
+}
+```
+
+### Transport Options
+
+| Transport | When to use |
+|---|---|
+| **stdio** | Local processes — Claude Code, CLI tools, scripts |
+| **HTTP + SSE** | Remote servers, web services, cloud deployments |
+| **Custom** | WebSockets, Unix sockets, embedded systems |
+
+The transport is pluggable — the JSON-RPC layer above it is always the same.
+
+---
+
+## The Initialize Handshake
+
+When a client connects to an MCP server, it begins with capability negotiation:
+
+```json
+// 1. Client announces its protocol version and capabilities
+{
+  "jsonrpc": "2.0",
+  "id": 0,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {
+      "roots": { "listChanged": true },
+      "sampling": {}
+    },
+    "clientInfo": { "name": "claude-code", "version": "1.0.0" }
+  }
+}
+
+// 2. Server responds with its capabilities
+{
+  "jsonrpc": "2.0",
+  "id": 0,
+  "result": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {
+      "tools": { "listChanged": true },
+      "resources": { "subscribe": false, "listChanged": true },
+      "prompts": {}
+    },
+    "serverInfo": { "name": "github-mcp", "version": "2.1.0" }
+  }
+}
+
+// 3. Client sends initialized notification (no response expected)
+{
+  "jsonrpc": "2.0",
+  "method": "notifications/initialized"
+}
+```
+
+After the handshake, the client knows exactly which primitives the server supports and can call `tools/list`, `resources/list`, or `prompts/list` accordingly.
+
+---
+
+## Tool Discovery: `tools/list`
+
+The client discovers available tools dynamically:
+
+```json
+// Request
+{ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }
+
+// Response — server describes its tools
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "tools": [
+      {
+        "name": "search_issues",
+        "description": "Search GitHub issues by keyword, label, or assignee. Returns up to 100 matching issues with title, number, status, and URL.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Search terms — supports GitHub search syntax (e.g. 'is:open label:bug')"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum results to return. Default 20, max 100.",
+              "default": 20
+            }
+          },
+          "required": ["query"]
+        }
+      }
+    ]
+  }
+}
+```
+
+<Callout variant="info" title="Dynamic discovery is a key MCP advantage">
+Because Claude discovers tools at runtime via `tools/list`, you can update server-side tools without changing the client or redeploying Claude. Add a new tool on the server and it's immediately available.
+</Callout>
+
+---
+
+## Resource Access
+
+Resources use URI addressing. A client fetches a resource by URI:
+
+```json
+// Discover available resources
+{ "jsonrpc": "2.0", "id": 2, "method": "resources/list" }
+
+// Response
+{
+  "result": {
+    "resources": [
+      {
+        "uri": "file:///project/README.md",
+        "name": "Project README",
+        "mimeType": "text/markdown"
+      },
+      {
+        "uri": "db://schema/public",
+        "name": "Database Schema",
+        "mimeType": "application/json"
+      }
+    ]
+  }
+}
+
+// Fetch a specific resource
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "resources/read",
+  "params": { "uri": "file:///project/README.md" }
+}
+```
+
+---
+
+## MCP in the Claude Ecosystem
+
+```
+┌─────────────────────────────────────┐
+│           Host Application          │
+│  (Claude Code / custom agent)       │
+│                                     │
+│  ┌──────────┐    ┌───────────────┐  │
+│  │  Claude  │◄──►│  MCP Client   │  │
+│  │  Model   │    │  (built-in)   │  │
+│  └──────────┘    └───────┬───────┘  │
+└────────────────────────┼────────────┘
+                          │ JSON-RPC / stdio or HTTP
+          ┌───────────────┼───────────────┐
+          │               │               │
+    ┌─────▼─────┐   ┌─────▼─────┐  ┌─────▼─────┐
+    │  GitHub   │   │ Postgres  │  │  Custom   │
+    │MCP Server │   │MCP Server │  │MCP Server │
+    └───────────┘   └───────────┘  └───────────┘
+```
+
+The host application manages MCP client connections. Claude itself only sees the tool definitions that the MCP client surfaces — it does not communicate with MCP servers directly.
+
+<ExamTip>
+The exam tests the layering: Claude sees **tool schemas** (JSON), not MCP protocol details. The MCP client handles JSON-RPC, transport, and capability negotiation. Claude just calls tools by name with arguments.
+</ExamTip>
+
+<AntiPatternCard
+  title="Treating MCP servers as REST APIs"
+  wrong={
+    <>
+      <p>Designing MCP tools that mirror HTTP endpoints 1:1:</p>
+      <pre><code>{`# BAD: too granular, forces Claude to chain many calls
+tools: [
+  get_user_by_id,        # GET /users/{id}
+  list_user_orders,      # GET /users/{id}/orders
+  get_order_by_id,       # GET /orders/{id}
+  list_order_items,      # GET /orders/{id}/items
+]
+# Claude needs 4 tool calls to answer "what did user 5 order recently?"`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Design tools around agent tasks, not data models:</p>
+      <pre><code>{`# GOOD: task-oriented, fewer round trips
+tools: [
+  get_user_with_recent_orders,  # Returns user + last N orders in one call
+  get_order_details,            # Returns order + all items in one call
+]
+# Claude answers "what did user 5 order recently?" in 1-2 calls`}</code></pre>
+    </>
+  }
+  explanation="MCP tools should be designed for the tasks agents perform, not for CRUD operations on your data model. Minimize tool call round trips."
+/>
+
+<KeyTakeaway>
+- MCP standardizes AI-to-system communication via JSON-RPC 2.0 over pluggable transports
+- Three primitives: **tools** (actions with side effects), **resources** (read-only data), **prompts** (reusable templates)
+- Initialize handshake negotiates capabilities before any tool calls
+- `tools/list` enables dynamic discovery — add server-side tools without client changes
+- Claude sees tool schemas only; MCP client handles all protocol details
+- Design tools around agent tasks, not data model CRUD operations
+</KeyTakeaway>

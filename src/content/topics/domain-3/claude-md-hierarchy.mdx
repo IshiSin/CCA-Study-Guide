@@ -1,0 +1,229 @@
+---
+title: "CLAUDE.md Hierarchy"
+description: "How CLAUDE.md files provide layered, scoped context to Claude Code — global, project, and subdirectory levels, import syntax, and precedence rules."
+estimatedMinutes: 20
+domain: 3
+---
+
+**CLAUDE.md** is a Markdown file that Claude Code automatically reads and injects into its context at the start of every session. It is the primary mechanism for giving Claude persistent, project-specific knowledge — coding conventions, commands, architecture decisions, and team norms — without repeating them in every prompt.
+
+## The Three-Level Hierarchy
+
+Claude Code loads CLAUDE.md files from three distinct locations, composing them in order from broadest to most specific:
+
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">CLAUDE.md Load Order</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-emerald-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-mono text-emerald-400 font-semibold w-1/4">Level</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/3">Location</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-2/5">Scope</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-emerald-400 font-semibold">Global</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">~/.claude/CLAUDE.md</td>
+        <td className="px-4 py-3 text-muted-foreground">All sessions, all projects — personal defaults</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-emerald-400 font-semibold">Project</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">./CLAUDE.md</td>
+        <td className="px-4 py-3 text-muted-foreground">All sessions in this repository — shared via git</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-emerald-400 font-semibold">Subdirectory</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">./src/CLAUDE.md</td>
+        <td className="px-4 py-3 text-muted-foreground">Sessions in that subtree — subsystem overrides</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+All three levels are loaded and **concatenated** — they do not override each other. The subdirectory CLAUDE.md adds to, rather than replaces, the project-level one.
+
+<ExamTip>
+The exam tests load order. Global is loaded first, project second, subdirectory last. If asked which takes precedence when there is a conflict — because they are concatenated, later entries (subdirectory) appear after earlier ones (global), so Claude reads subdirectory context most recently. But the key exam answer is: all three are included simultaneously, not cascading overrides.
+</ExamTip>
+
+---
+
+## What to Put in Each Level
+
+```markdown
+# ~/.claude/CLAUDE.md  (global — personal preferences)
+
+## My Defaults
+- Preferred language: TypeScript over JavaScript
+- Always use async/await, never .then() chains
+- Write tests alongside new features, never after
+- Never add TODO comments — either fix it or open a ticket
+
+## Common Commands I Use
+- `git lg` — my git log alias
+- `npm run typecheck && npm test` before committing
+```
+
+```markdown
+# ./CLAUDE.md  (project root — shared with team via git)
+
+## Project: Payments API
+
+### Commands
+- `npm run dev` — start dev server (port 4000)
+- `npm run test:integration` — requires Docker running
+
+### Architecture
+- REST API, Express + TypeScript, Postgres via Prisma
+- All monetary amounts stored as integers (cents), never floats
+- Auth: JWT in Authorization header, refresh tokens in HttpOnly cookie
+
+### Conventions
+- File naming: kebab-case for files, PascalCase for classes
+- Error handling: always use the AppError class, never throw raw Error
+- Logging: use the logger from src/lib/logger — never console.log in prod code
+
+### Do Not
+- Do not install new npm packages without confirming with the user first
+- Do not modify the Prisma schema directly — always go through a migration
+```
+
+```markdown
+# ./src/payments/CLAUDE.md  (subdirectory — subsystem specifics)
+
+## Payments Subsystem
+
+This directory handles Stripe integration and internal ledger operations.
+
+### Critical Rules
+- All Stripe webhook handlers must verify the signature (use verifyStripeSignature())
+- Test with Stripe CLI: `stripe listen --forward-to localhost:4000/webhooks/stripe`
+- Idempotency keys are required on all Stripe charges
+
+### Files
+- stripe.ts — Stripe client singleton (do not create new instances)
+- ledger.ts — Internal double-entry ledger (consult before modifying)
+```
+
+---
+
+## Importing Files with `@path` Syntax
+
+CLAUDE.md files can import other files using the `@` prefix. The imported content is inlined at that position:
+
+```markdown
+# CLAUDE.md
+
+## API Reference
+@docs/api-reference.md
+
+## Database Schema
+@prisma/schema.prisma
+
+## Environment Variables
+@.env.example
+```
+
+This is useful for:
+- Keeping CLAUDE.md concise by referencing authoritative docs
+- Including current schema files without duplication
+- Sharing large reference materials without bloating the main file
+
+<Callout variant="info" title="Imports are resolved at read time">
+When Claude Code loads CLAUDE.md, it resolves all `@file` imports immediately. The imported content becomes part of Claude's context. If the referenced file changes, the next session sees the updated content automatically.
+</Callout>
+
+---
+
+## What Claude Code Does With CLAUDE.md
+
+The content is injected into the system prompt as context — Claude treats it as authoritative guidance for the session. Unlike chat messages, it is not subject to conversation history limits in the same way: it is re-injected at each session start.
+
+```
+Session startup sequence:
+1. Load ~/.claude/CLAUDE.md (global)
+2. Walk up from CWD to git root, load each CLAUDE.md found
+3. If CWD has a subdirectory CLAUDE.md, load it too
+4. Resolve all @imports
+5. Inject combined content into system context
+6. Begin session
+```
+
+<ExamTip>
+CLAUDE.md is **not** a memory system — it does not update during a session. Changes take effect the next time Claude Code is started. For per-session state, use conversation context. For persistent memory across sessions, use CLAUDE.md.
+</ExamTip>
+
+---
+
+## Practical Patterns
+
+**Document commands, not processes.** Claude Code runs commands you tell it to — the most valuable thing in CLAUDE.md is the exact commands it needs:
+
+```markdown
+## Commands
+- `npm run dev` — start dev server
+- `npm test -- --watch` — run tests in watch mode
+- `docker compose up -d` — start required services
+- `npx prisma migrate dev` — apply pending migrations
+```
+
+**Capture non-obvious architectural decisions.** Things Claude can't infer from reading code:
+
+```markdown
+## Architecture Decisions
+- We use Postgres for the job queue (not Redis/BullMQ) — see ADR-012
+- Auth tokens are 15min, refresh tokens 30 days — intentional, per security review
+- The /health endpoint must not require authentication — load balancer depends on it
+```
+
+**List explicit do-nots.** Prevent Claude from making well-intentioned but wrong choices:
+
+```markdown
+## Do Not
+- Do not use console.log — use the logger (src/lib/logger.ts)
+- Do not add index.ts barrel files — we import directly to keep bundles lean
+- Do not modify package.json scripts without asking — CI depends on exact names
+```
+
+<AntiPatternCard
+  title="Putting everything in CLAUDE.md"
+  wrong={
+    <>
+      <p>Dumping all project documentation into CLAUDE.md:</p>
+      <pre><code>{`# CLAUDE.md
+## Full API Documentation
+[3000 lines of generated API docs]
+
+## Complete Database Schema
+[Every table, every column, every index]
+
+## All ADRs
+[Every architectural decision record ever written]
+# Result: Claude's context is consumed by noise; useful signals get buried`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Keep CLAUDE.md focused on what Claude needs to <em>act</em> correctly:</p>
+      <pre><code>{`# CLAUDE.md
+## Commands        ← what to run
+## Key Files       ← where things are
+## Conventions     ← how we write code here
+## Do Not          ← things that look right but are wrong
+
+# For deep reference, use @imports:
+@docs/api-reference.md   ← pulled in only when this file is read`}</code></pre>
+    </>
+  }
+  explanation="CLAUDE.md context competes with conversation context. Keep it to actionable guidance: commands, conventions, constraints, and key architectural facts."
+/>
+
+<KeyTakeaway>
+- Three levels: global (`~/.claude/CLAUDE.md`), project (`./CLAUDE.md`), subdirectory (`./src/CLAUDE.md`)
+- All three are loaded and concatenated — subdirectory adds to project, not replaces it
+- Use `@path/to/file` to import external files inline
+- CLAUDE.md is injected at session start — changes take effect next session, not mid-session
+- Best content: exact commands, architectural constraints, explicit do-nots, non-obvious decisions
+- Keep it focused — context used by CLAUDE.md is unavailable for conversation
+</KeyTakeaway>

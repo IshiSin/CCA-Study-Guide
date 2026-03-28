@@ -1,0 +1,331 @@
+---
+title: "Human-in-the-Loop"
+description: "Patterns for inserting human review into agentic workflows — approval gates, interrupt points, confirmation flows, and designing for appropriate autonomy."
+estimatedMinutes: 20
+domain: 5
+---
+
+**Human-in-the-loop (HITL)** is the design principle that humans remain involved in agentic workflows at appropriate decision points — not constantly, not never, but where it matters. HITL is not a limitation of agent capability; it is a deliberate architectural choice that makes agents safe to deploy on high-stakes tasks.
+
+## The HITL Spectrum
+
+Agent autonomy exists on a spectrum. The right position depends on task risk, reversibility, and how much the system has been validated:
+
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Autonomy Spectrum</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-red-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/4">Mode</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-2/5">Human Role</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/3">Best For</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-red-400 font-semibold">Human-in-the-loop</td>
+        <td className="px-4 py-3 text-muted-foreground">Reviews and approves before every significant action</td>
+        <td className="px-4 py-3 text-muted-foreground">High-stakes, novel, or irreversible tasks</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-orange-400 font-semibold">Human-on-the-loop</td>
+        <td className="px-4 py-3 text-muted-foreground">Monitors; can interrupt; reviews after completion</td>
+        <td className="px-4 py-3 text-muted-foreground">Validated workflows with moderate risk</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-emerald-400 font-semibold">Fully autonomous</td>
+        <td className="px-4 py-3 text-muted-foreground">Sets task and reviews final output only</td>
+        <td className="px-4 py-3 text-muted-foreground">Routine, low-risk, fully reversible tasks</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<ExamTip>
+The exam tests the **human-in-the-loop vs. human-on-the-loop** distinction. HITL = human approves before action. Human-on-the-loop = human monitors and can intervene, but actions proceed unless interrupted. Both are valid patterns; the choice depends on risk level.
+</ExamTip>
+
+---
+
+## Approval Gates
+
+An **approval gate** is a synchronous pause in agent execution where the agent presents a plan and waits for explicit human sign-off before continuing.
+
+```python
+from typing import Callable
+import json
+
+def run_with_approval_gate(
+    agent_plan: list[dict],
+    approval_fn: Callable[[list[dict]], bool],
+) -> dict:
+    """
+    Run an agentic workflow with a human approval gate before execution.
+
+    approval_fn: function that presents the plan to a human and returns True/False
+    """
+    # Phase 1: Planning (read-only — no side effects)
+    print("Planning phase: analyzing task...")
+    # Agent reads files, explores codebase, builds plan
+    plan = build_execution_plan(agent_plan)
+
+    print(f"\nProposed plan ({len(plan['steps'])} steps):")
+    for i, step in enumerate(plan['steps'], 1):
+        print(f"  {i}. [{step['reversibility']}] {step['description']}")
+
+    # Gate: human reviews the plan
+    approved = approval_fn(plan)
+    if not approved:
+        return {"status": "cancelled", "reason": "Human rejected the plan"}
+
+    # Phase 2: Execution (approved — proceed with side effects)
+    print("\nExecuting approved plan...")
+    results = execute_plan(plan)
+    return {"status": "complete", "results": results}
+
+
+# CLI approval function
+def cli_approval(plan: dict) -> bool:
+    print(f"\nFiles to be modified: {', '.join(plan.get('files_affected', []))}")
+    print(f"Estimated impact: {plan.get('impact_summary', 'unknown')}")
+    response = input("\nApprove this plan? [y/N]: ").strip().lower()
+    return response == 'y'
+
+# Programmatic approval (for testing or automated environments)
+def auto_approve_if_safe(plan: dict) -> bool:
+    has_irreversible = any(
+        s['reversibility'] == 'irreversible'
+        for s in plan['steps']
+    )
+    return not has_irreversible
+```
+
+---
+
+## Interrupt Points
+
+An **interrupt point** is a location in execution where the agent proactively pauses to check in, even if no error has occurred. Well-designed agents place interrupt points before:
+
+1. **Destructive operations** — deletes, drops, overwrites
+2. **External communications** — sending emails, posting to APIs, webhooks
+3. **Scope expansion** — when the task turns out larger than originally described
+4. **Unexpected findings** — the agent discovers something surprising mid-task
+
+**Scope expansion example:** User asks an agent to "clean up unused imports in `auth.py`." Mid-task the agent discovers that removing those imports requires changes in 14 other files. Rather than silently making 15-file edits, a well-designed agent pauses:
+
+> *"Removing unused imports from `auth.py` requires changes in 14 additional files (`middleware.py`, `routes/*.py`, etc.). Do you want me to proceed with all 15 files, or limit changes to `auth.py` only?"*
+
+**Unexpected findings example:** A data migration agent, while moving records to the new schema, finds 3,200 rows with `null` values in a field that should be required. Instead of silently skipping or inserting empty strings, it pauses:
+
+> *"Found 3,200 rows with null `user_id`. Migration cannot proceed safely without knowing the correct handling: skip these rows, assign a placeholder, or abort? Current progress: 8,000 / 45,000 rows migrated."*
+
+```python
+def execute_step_with_interrupt_check(
+    step: dict,
+    interrupt_fn: Callable[[dict], str],
+) -> dict:
+    """
+    Execute a step, but pause at interrupt points for human confirmation.
+
+    interrupt_fn: called with step context, returns "proceed" | "skip" | "abort"
+    """
+    # Check if this step is an interrupt point
+    if is_interrupt_point(step):
+        action = interrupt_fn({
+            "step": step,
+            "description": step["description"],
+            "what_happens": step["consequences"],
+            "reversible": step["reversible"],
+        })
+        if action == "abort":
+            raise InterruptedError(f"Human aborted at step: {step['id']}")
+        elif action == "skip":
+            return {"status": "skipped", "step_id": step["id"]}
+
+    # Proceed with step execution
+    return execute_step(step)
+
+
+def is_interrupt_point(step: dict) -> bool:
+    """Identify steps that warrant a human check-in."""
+    return (
+        not step.get("reversible", True)
+        or step.get("type") in {"send_email", "post_webhook", "delete", "deploy"}
+        or step.get("scope_expanded", False)
+        or step.get("unexpected_finding", False)
+    )
+```
+
+---
+
+## Confirmation Flow Design
+
+When the agent asks a human a question, the quality of that question determines the quality of the answer. Design confirmation flows around the human's decision, not the agent's uncertainty:
+
+```python
+@dataclass
+class ConfirmationRequest:
+    """A structured request for human input."""
+    question: str                   # The exact decision needed
+    context: str                    # Enough background to decide
+    options: list[dict]             # Each option: {id, label, consequence}
+    default: str | None             # Safe default if human doesn't respond
+    timeout_seconds: int | None     # How long to wait (None = wait forever)
+
+    def format(self) -> str:
+        lines = [
+            "---",
+            f"**Decision needed:** {self.question}",
+            f"\n{self.context}\n",
+            "**Options:**"
+        ]
+        for opt in self.options:
+            lines.append(f"  [{opt['id']}] {opt['label']}")
+            lines.append(f"       → {opt['consequence']}")
+        if self.default:
+            lines.append(f"\nDefault if no response: [{self.default}]")
+        return "\n".join(lines)
+
+
+# Example: scope expansion confirmation
+scope_request = ConfirmationRequest(
+    question="The task requires modifying more files than expected. How should I proceed?",
+    context=(
+        "You asked me to fix the login bug in auth.py. "
+        "I found the root cause: the session token format changed in utils/tokens.py. "
+        "Fixing auth.py alone will not work — tokens.py also needs updating. "
+        "Additionally, 4 test files reference the old token format."
+    ),
+    options=[
+        {
+            "id": "A",
+            "label": "Fix all affected files (auth.py + tokens.py + 4 test files)",
+            "consequence": "Complete fix, all tests will pass. 6 files modified."
+        },
+        {
+            "id": "B",
+            "label": "Fix only auth.py as originally requested",
+            "consequence": "Partial fix. Login still broken until tokens.py is updated separately."
+        },
+        {
+            "id": "C",
+            "label": "Abort — I'll redesign the fix myself",
+            "consequence": "No changes made."
+        },
+    ],
+    default="B",  # Conservative default
+    timeout_seconds=300,
+)
+```
+
+---
+
+## Async HITL: Human-on-the-Loop
+
+For workflows where the human can't be present synchronously, design for **async review**:
+
+```python
+import asyncio
+from datetime import datetime, timedelta
+
+class AsyncHITLWorkflow:
+    """
+    Human-on-the-loop: agent proceeds, human can interrupt.
+    Actions are logged and held for N seconds before execution
+    to give the human a chance to cancel.
+    """
+    def __init__(self, review_window_seconds: int = 30):
+        self.review_window = review_window_seconds
+        self.pending_actions: list[dict] = []
+        self.cancelled_ids: set[str] = set()
+
+    async def queue_action(self, action: dict) -> dict:
+        """Queue an action for execution after review window."""
+        action_id = generate_id()
+        action["id"] = action_id
+        action["queued_at"] = datetime.utcnow().isoformat()
+        action["executes_at"] = (
+            datetime.utcnow() + timedelta(seconds=self.review_window)
+        ).isoformat()
+
+        self.pending_actions.append(action)
+        await self.notify_monitor(action)
+
+        # Wait for the review window
+        await asyncio.sleep(self.review_window)
+
+        if action_id in self.cancelled_ids:
+            return {"status": "cancelled", "id": action_id}
+
+        # Execute after review window passes without cancellation
+        return await self.execute(action)
+
+    def cancel_action(self, action_id: str):
+        """Human cancels a pending action during the review window."""
+        self.cancelled_ids.add(action_id)
+
+    async def notify_monitor(self, action: dict):
+        """Send pending action to monitoring dashboard / Slack / etc."""
+        await send_to_dashboard({
+            "type": "pending_action",
+            "action": action,
+            "cancel_url": f"/api/agent/cancel/{action['id']}",
+            "expires_at": action["executes_at"],
+        })
+```
+
+---
+
+## When to Use Each HITL Pattern
+
+| Situation | Pattern | Reason |
+|---|---|---|
+| First run of a new workflow | Approval gate | Validate approach before side effects |
+| Batch operation on production data | Approval gate | Irreversible at scale |
+| Routine CI/CD task (well-tested) | Fully autonomous | Low risk, validated many times |
+| Long-running background job | Human-on-the-loop | Human can intervene if something looks wrong |
+| Sending external communications | Interrupt point | Can't take back an email |
+| Unexpected scope expansion | Interrupt point | Human intent may not cover expanded scope |
+
+<AntiPatternCard
+  title="HITL as an afterthought"
+  wrong={
+    <>
+      <p>Building a fully autonomous agent and adding HITL checkpoints as an afterthought:</p>
+      <pre><code>{`# The agent does everything, then at the end:
+result = agent.run_full_migration()
+
+# "Did it work?"
+print(result)
+
+# Problem: by the time you see the result, the migration ran,
+# the old tables were dropped, and the prod database was modified.
+# HITL added after the fact is surveillance, not control.`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Design HITL checkpoints into the workflow architecture from the start:</p>
+      <pre><code>{`# HITL is part of the workflow design, not bolted on
+workflow = [
+    Phase("plan",    read_only=True,  requires_approval=False),
+    Phase("approve", read_only=True,  requires_approval=True),   # Gate
+    Phase("migrate", read_only=False, requires_approval=False),
+    Phase("verify",  read_only=True,  requires_approval=False),
+    Phase("cleanup", read_only=False, requires_approval=True),   # Gate before deletes
+]
+# Human sees the plan before migration runs
+# Human approves cleanup before tables are dropped`}</code></pre>
+    </>
+  }
+  explanation="HITL checkpoints must be designed into the workflow before implementation. Retrofitting them after the fact means the agent has already acquired capabilities (tool access, execution paths) that bypass the checkpoints."
+/>
+
+<KeyTakeaway>
+- Human-in-the-loop = approve before action; human-on-the-loop = monitor and can interrupt
+- Approval gates: agent plans (read-only), human approves, agent executes
+- Interrupt points: agent pauses proactively before destructive or unexpected actions
+- Confirmation requests must surface **the decision**, not just the problem — give options with consequences
+- Async HITL: queue actions with a review window so humans can cancel before execution
+- Design HITL checkpoints into workflow architecture from the start — not as an afterthought
+</KeyTakeaway>

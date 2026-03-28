@@ -1,0 +1,325 @@
+---
+title: "Structured Errors"
+description: "Designing tool error responses that Claude can reason about — isError semantics, error taxonomy, retry guidance, and failure propagation."
+estimatedMinutes: 15
+domain: 2
+---
+
+When a tool fails, how you report the error determines whether Claude can recover. A bare exception terminates the loop. A well-structured error response lets Claude understand what went wrong, decide whether to retry, and communicate the failure to the user in a useful way.
+
+## The Two-Level Error Model
+
+MCP and the Anthropic tool use protocol define two distinct error levels:
+
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Tool Error Levels</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-purple-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-mono text-purple-400 font-semibold w-1/4">Level</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/4">Mechanism</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/4">Claude sees</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/4">When to use</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-purple-400">Protocol error</td>
+        <td className="px-4 py-3 text-muted-foreground">Exception / HTTP 4xx/5xx</td>
+        <td className="px-4 py-3 text-muted-foreground">Tool call failed (no content)</td>
+        <td className="px-4 py-3 text-muted-foreground">Malformed request, unknown tool, programming error</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-purple-400">Content error</td>
+        <td className="px-4 py-3 text-muted-foreground">Return structured text</td>
+        <td className="px-4 py-3 text-muted-foreground">Tool result with error details</td>
+        <td className="px-4 py-3 text-muted-foreground">Expected failures: not found, timeout, permission, quota</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+**The key rule:** expected failure states should return structured content, not raise exceptions. This lets Claude read the error, reason about it, and decide how to proceed.
+
+---
+
+## Structured Error Response Schema
+
+Design a consistent error schema across all your tools:
+
+```python
+import json
+from enum import Enum
+
+class ErrorType(str, Enum):
+    NOT_FOUND = "not_found"
+    PERMISSION_DENIED = "permission_denied"
+    INVALID_INPUT = "invalid_input"
+    TIMEOUT = "timeout"
+    QUOTA_EXCEEDED = "quota_exceeded"
+    EXTERNAL_SERVICE = "external_service_error"
+    CONFLICT = "conflict"
+
+def error_response(
+    error_type: ErrorType,
+    message: str,
+    retryable: bool = False,
+    suggestion: str | None = None,
+    details: dict | None = None,
+) -> str:
+    """Return a structured JSON error that Claude can parse and act on."""
+    payload = {
+        "success": False,
+        "error": {
+            "type": error_type.value,
+            "message": message,
+            "retryable": retryable,
+        }
+    }
+    if suggestion:
+        payload["error"]["suggestion"] = suggestion
+    if details:
+        payload["error"]["details"] = details
+    return json.dumps(payload)
+
+
+def success_response(data: dict | list) -> str:
+    return json.dumps({"success": True, "data": data})
+```
+
+---
+
+## Applying Structured Errors in a Tool
+
+```python
+from anthropic.agents import tool
+
+@tool
+def get_customer(customer_id: str) -> str:
+    """
+    Fetch a customer record by ID.
+    Returns customer details or a structured error if not found.
+
+    Returns:
+        On success: {"success": true, "data": {"id": ..., "name": ..., "email": ...}}
+        On error: {"success": false, "error": {"type": ..., "message": ..., "retryable": ...}}
+    """
+    # Validate input format
+    if not customer_id.startswith("cust_"):
+        return error_response(
+            ErrorType.INVALID_INPUT,
+            f"Invalid customer ID format: '{customer_id}'. Must start with 'cust_'.",
+            retryable=False,
+            suggestion="Use search_customers to find the correct ID by name or email."
+        )
+
+    try:
+        customer = database.get_customer(customer_id)
+
+        if customer is None:
+            return error_response(
+                ErrorType.NOT_FOUND,
+                f"No customer found with ID '{customer_id}'.",
+                retryable=False,
+                suggestion="Use search_customers to find the correct ID."
+            )
+
+        return success_response(customer.to_dict())
+
+    except DatabaseTimeoutError:
+        return error_response(
+            ErrorType.TIMEOUT,
+            "Database query timed out after 10 seconds.",
+            retryable=True,
+            suggestion="Try again in a few seconds. If it persists, the query may need optimization."
+        )
+
+    except PermissionError as e:
+        return error_response(
+            ErrorType.PERMISSION_DENIED,
+            str(e),
+            retryable=False,
+            suggestion="Check that the current user has access to customer records."
+        )
+```
+
+<ExamTip>
+The exam tests the `retryable` field. Claude uses this to decide its next action: if `retryable: true`, it may retry the same call. If `retryable: false`, it should try a different approach (different tool, different input, or surface the error to the user). Always include this field.
+</ExamTip>
+
+---
+
+## The `isError` Field in MCP
+
+In MCP servers, the protocol supports an explicit `isError` flag on tool results:
+
+```python
+from mcp import types
+
+@app.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    if name == "fetch_url":
+        url = arguments.get("url", "")
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, timeout=10.0)
+                response.raise_for_status()
+                return [types.TextContent(type="text", text=response.text)]
+
+        except httpx.TimeoutException:
+            # isError=True signals this as a failed tool result
+            return [types.TextContent(
+                type="text",
+                text=json.dumps({
+                    "error": "Request timed out after 10 seconds",
+                    "error_type": "timeout",
+                    "retryable": True,
+                    "url": url
+                }),
+                # Note: isError is set on the ToolResult at the protocol level
+                # The SDK handles this automatically when you use error content
+            )]
+
+        except httpx.HTTPStatusError as e:
+            return [types.TextContent(
+                type="text",
+                text=json.dumps({
+                    "error": f"HTTP {e.response.status_code}: {e.response.reason_phrase}",
+                    "error_type": "external_service_error",
+                    "retryable": e.response.status_code >= 500,  # 5xx are retryable; 4xx are not
+                    "url": url,
+                    "status_code": e.response.status_code
+                })
+            )]
+```
+
+---
+
+## Error Taxonomy: What Makes an Error Retryable
+
+```python
+# Retryable errors: the same call might succeed later
+RETRYABLE_ERROR_TYPES = {
+    ErrorType.TIMEOUT,           # Transient — service may recover
+    ErrorType.QUOTA_EXCEEDED,    # Wait and retry later
+    ErrorType.EXTERNAL_SERVICE,  # Upstream dependency may recover
+}
+
+# Non-retryable errors: same call will always fail
+NON_RETRYABLE_ERROR_TYPES = {
+    ErrorType.NOT_FOUND,         # The resource doesn't exist — retrying won't help
+    ErrorType.PERMISSION_DENIED, # Access policy won't change during the run
+    ErrorType.INVALID_INPUT,     # Input format is wrong — retry with same input fails
+    ErrorType.CONFLICT,          # State conflict — needs resolution, not retry
+}
+```
+
+<Callout variant="warning" title="HTTP 429 is retryable; HTTP 404 is not">
+When wrapping HTTP APIs: 429 (rate limit) and 503 (service unavailable) are retryable. 404 (not found) and 403 (forbidden) are not. Map HTTP status codes to your error taxonomy explicitly rather than treating all failures the same.
+</Callout>
+
+---
+
+## Propagating Errors Through Multi-Agent Systems
+
+In hub-and-spoke architectures, subagent errors must be propagated with enough context for the coordinator to act:
+
+```python
+def run_subagent_with_error_handling(task: dict) -> dict:
+    """Run a subagent and return a structured result the coordinator can parse."""
+    try:
+        result = subagent.run(task["description"])
+        return {
+            "task_id": task["id"],
+            "status": "success",
+            "result": result
+        }
+    except Exception as e:
+        return {
+            "task_id": task["id"],
+            "status": "failed",
+            "error": {
+                "type": "subagent_error",
+                "message": str(e),
+                "retryable": is_retryable_error(e),
+                "task_description": task["description"][:200],
+            }
+        }
+
+
+def coordinator_aggregate(results: list[dict]) -> str:
+    """Coordinator handles partial failures gracefully."""
+    successes = [r for r in results if r["status"] == "success"]
+    failures = [r for r in results if r["status"] == "failed"]
+
+    if not successes:
+        # All subagents failed — cannot produce a useful result
+        error_summary = "; ".join(r["error"]["message"] for r in failures)
+        return json.dumps({
+            "success": False,
+            "error": f"All subtasks failed: {error_summary}"
+        })
+
+    # Partial success — produce result from what succeeded, report failures
+    response = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=2048,
+        system="Synthesize available results. Note any missing data from failed tasks.",
+        messages=[{
+            "role": "user",
+            "content": f"Successes: {json.dumps(successes)}\nFailures: {json.dumps(failures)}"
+        }]
+    )
+    return response.content[0].text
+```
+
+<AntiPatternCard
+  title="Swallowing errors with empty or generic responses"
+  wrong={
+    <>
+      <p>Returning empty results or generic strings on failure:</p>
+      <pre><code>{`@tool
+def search_database(query: str) -> str:
+    try:
+        results = db.search(query)
+        return json.dumps(results)
+    except Exception:
+        return "[]"   # Empty result looks like "no matches found"
+        # OR
+        return "Error occurred"  # Claude can't act on this
+        # Claude cannot distinguish "no results" from "search failed"`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Return distinct structured responses for success and failure:</p>
+      <pre><code>{`@tool
+def search_database(query: str) -> str:
+    try:
+        results = db.search(query)
+        return json.dumps({"success": True, "results": results, "count": len(results)})
+    except DatabaseConnectionError:
+        return json.dumps({
+            "success": False,
+            "error": {"type": "external_service_error",
+                      "message": "Database unreachable",
+                      "retryable": True}
+        })
+    except Exception as e:
+        return json.dumps({
+            "success": False,
+            "error": {"type": "unknown", "message": str(e), "retryable": False}
+        })`}</code></pre>
+    </>
+  }
+  explanation="Empty results and generic error strings force Claude to guess whether the operation succeeded. Structured error responses with type, message, and retryable let Claude make informed decisions about next steps."
+/>
+
+<KeyTakeaway>
+- Two error levels: raise exceptions for malformed requests; return structured content for expected failures
+- Always include `error_type`, `message`, and `retryable` fields in error responses
+- `retryable: true` = same call may succeed later (timeouts, quota); `retryable: false` = try a different approach
+- HTTP 5xx → retryable; HTTP 4xx → not retryable (except 429 rate limit → retryable)
+- In multi-agent systems, propagate errors with enough context for the coordinator to make routing decisions
+- Never swallow errors with empty returns — empty results are indistinguishable from "no matches found"
+</KeyTakeaway>

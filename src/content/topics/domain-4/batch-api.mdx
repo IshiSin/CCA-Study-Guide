@@ -1,0 +1,290 @@
+---
+title: "Batch API"
+description: "When and how to use the Anthropic Batch API — request format, polling for results, cost savings, throughput vs. latency tradeoffs, and error handling."
+estimatedMinutes: 15
+domain: 4
+---
+
+The **Message Batches API** lets you submit up to 10,000 requests in a single batch and process them asynchronously. Batches run at reduced cost and higher throughput than the synchronous Messages API — the tradeoff is that results are not available immediately.
+
+## When to Use the Batch API
+
+| Use Case | Batch API? | Reason |
+|---|---|---|
+| Classifying 50,000 customer messages | Yes | High volume, no real-time requirement |
+| Real-time chatbot responses | No | Latency matters — users are waiting |
+| Nightly document processing pipeline | Yes | Async is fine, volume is large |
+| PR review that posts a comment | No | User is waiting for the comment |
+| Generating embeddings for a product catalog | Yes | Batch job, not user-facing |
+| Sentiment analysis on a data export | Yes | Offline processing, large dataset |
+
+<ExamTip>
+The exam tests the core tradeoff: Batch API gives you ~50% cost reduction and higher throughput at the cost of latency (minutes to hours, not milliseconds). If the user is waiting for a response, use the synchronous API. If you're processing data offline, use Batch.
+</ExamTip>
+
+---
+
+## Submitting a Batch
+
+Each batch is a list of `Request` objects with a unique `custom_id` per request:
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+
+# Prepare batch requests
+batch_requests = []
+for message_id, message_text in customer_messages.items():
+    batch_requests.append(
+        anthropic.types.message_create_params.MessageCreateParamsNonStreaming(
+            model="claude-opus-4-6",
+            max_tokens=256,
+            system="Classify the customer message as: billing, technical, general, or complaint.",
+            messages=[{"role": "user", "content": message_text}]
+        )
+    )
+
+# Wrap in MessageBatchRequestParam
+requests = [
+    anthropic.types.MessageBatchRequestParam(
+        custom_id=str(message_id),   # Must be unique within the batch
+        params=batch_params
+    )
+    for message_id, batch_params in zip(
+        customer_messages.keys(), batch_requests
+    )
+]
+
+# Submit the batch
+batch = client.beta.messages.batches.create(requests=requests)
+print(f"Batch ID: {batch.id}")
+print(f"Status: {batch.processing_status}")  # "in_progress"
+```
+
+### Batch Limits
+
+| Limit | Value |
+|---|---|
+| Max requests per batch | 10,000 |
+| Max batch size | 32 MB |
+| Batch expiry (if not retrieved) | 29 days |
+| Cost reduction vs. synchronous | ~50% |
+
+---
+
+## Polling for Results
+
+Batches take minutes to hours depending on size and system load. Poll until `processing_status` is `"ended"`:
+
+```python
+import time
+import anthropic
+
+client = anthropic.Anthropic()
+
+def wait_for_batch(batch_id: str, poll_interval_seconds: int = 30) -> anthropic.types.MessageBatch:
+    """Poll until batch completes. Returns the completed batch."""
+    while True:
+        batch = client.beta.messages.batches.retrieve(batch_id)
+
+        if batch.processing_status == "ended":
+            return batch
+
+        # Not done yet — wait and poll again
+        print(f"Batch {batch_id}: {batch.request_counts.processing} processing, "
+              f"{batch.request_counts.succeeded} succeeded")
+        time.sleep(poll_interval_seconds)
+```
+
+<Callout variant="info" title="Use webhooks in production instead of polling">
+For production pipelines, configure a webhook URL when creating the batch. Anthropic will POST to your endpoint when the batch completes — more efficient than polling. The poll-and-wait pattern is fine for scripts and offline jobs.
+</Callout>
+
+---
+
+## Retrieving Results
+
+Results are streamed back per-request using the `results()` iterator. Each result has a `result.type` that indicates success or failure:
+
+```python
+def process_batch_results(batch_id: str) -> dict[str, str]:
+    """Returns a dict of custom_id -> classification result."""
+    results = {}
+    errors = {}
+
+    for result in client.beta.messages.batches.results(batch_id):
+        if result.result.type == "succeeded":
+            # Extract text from the response
+            text = result.result.message.content[0].text
+            results[result.custom_id] = text.strip()
+
+        elif result.result.type == "errored":
+            error = result.result.error
+            errors[result.custom_id] = f"{error.type}: {error.message}"
+            print(f"Request {result.custom_id} failed: {error.type}")
+
+        elif result.result.type == "expired":
+            # The request timed out within the batch
+            errors[result.custom_id] = "expired"
+
+    print(f"Completed: {len(results)}, Errors: {len(errors)}")
+    return results, errors
+```
+
+### Result Types
+
+| Result Type | Meaning | Action |
+|---|---|---|
+| `succeeded` | Request completed successfully | Extract from `result.message` |
+| `errored` | API error (invalid request, content policy, etc.) | Log error, consider retry |
+| `expired` | Request didn't complete before batch timeout | Retry in a new batch |
+
+---
+
+## Complete Batch Pipeline
+
+```python
+import anthropic
+import time
+import json
+from pathlib import Path
+
+client = anthropic.Anthropic()
+
+def batch_classify_documents(
+    documents: dict[str, str],  # {doc_id: text}
+    output_file: str = "batch_results.jsonl"
+) -> dict[str, dict]:
+    """
+    Batch-classify documents and save results to a JSONL file.
+    Returns results as a dict of {doc_id: result_dict}.
+    """
+
+    print(f"Submitting batch of {len(documents)} documents...")
+
+    # Build requests
+    requests = [
+        anthropic.types.MessageBatchRequestParam(
+            custom_id=doc_id,
+            params=anthropic.types.message_create_params.MessageCreateParamsNonStreaming(
+                model="claude-opus-4-6",
+                max_tokens=512,
+                system="""Classify the document and return JSON only:
+{
+  "category": "contract" | "invoice" | "report" | "correspondence" | "other",
+  "language": "en" | "es" | "fr" | "de" | "other",
+  "page_count_estimate": integer,
+  "contains_pii": boolean,
+  "summary": "one sentence summary"
+}""",
+                messages=[{"role": "user", "content": text}]
+            )
+        )
+        for doc_id, text in documents.items()
+    ]
+
+    # Submit
+    batch = client.beta.messages.batches.create(requests=requests)
+    batch_id = batch.id
+    print(f"Batch submitted: {batch_id}")
+
+    # Poll until complete
+    while True:
+        batch = client.beta.messages.batches.retrieve(batch_id)
+        counts = batch.request_counts
+        print(f"Status: processing={counts.processing}, "
+              f"succeeded={counts.succeeded}, errored={counts.errored}")
+
+        if batch.processing_status == "ended":
+            break
+        time.sleep(60)  # Poll every minute
+
+    # Collect results
+    results = {}
+    failed_ids = []
+
+    with open(output_file, "w") as f:
+        for result in client.beta.messages.batches.results(batch_id):
+            if result.result.type == "succeeded":
+                try:
+                    data = json.loads(result.result.message.content[0].text)
+                    results[result.custom_id] = data
+                    f.write(json.dumps({"id": result.custom_id, "data": data}) + "\n")
+                except json.JSONDecodeError:
+                    failed_ids.append(result.custom_id)
+            else:
+                failed_ids.append(result.custom_id)
+
+    print(f"Done. {len(results)} succeeded, {len(failed_ids)} failed.")
+    if failed_ids:
+        print(f"Failed IDs: {failed_ids[:10]}{'...' if len(failed_ids) > 10 else ''}")
+
+    return results, failed_ids
+```
+
+---
+
+## Cost and Throughput
+
+The Batch API provides approximately 50% cost reduction vs. synchronous API calls. For large-scale workloads:
+
+```python
+# Synchronous: 10,000 requests at full price
+# Each request: ~1,000 input tokens + 256 output tokens
+# Total cost: 10,000 × (cost_per_1M_in × 1 + cost_per_1M_out × 0.256)
+
+# Batch API: Same requests at ~50% cost
+# Tradeoff: Results available in minutes/hours, not milliseconds
+```
+
+For a 50,000 document pipeline running nightly, the batch API can halve infrastructure costs while processing the entire corpus before morning.
+
+<AntiPatternCard
+  title="Using the Batch API for user-facing requests"
+  wrong={
+    <>
+      <p>Batching requests where users are waiting for responses:</p>
+      <pre><code>{`# In a web request handler:
+async def handle_user_question(request):
+    batch = client.beta.messages.batches.create(
+        requests=[MessageBatchRequestParam(
+            custom_id="user-123",
+            params=MessageCreateParamsNonStreaming(...)
+        )]
+    )
+    # Now what? User is waiting. Batch takes minutes.
+    # Cannot await the batch synchronously in a web handler.
+    # This is the wrong API for this use case.`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Use synchronous API for user-facing requests; batch for offline processing:</p>
+      <pre><code>{`# User-facing: synchronous
+async def handle_user_question(request):
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": request.question}]
+    )
+    return response.content[0].text
+
+# Offline pipeline: batch
+def nightly_document_pipeline(documents):
+    batch = client.beta.messages.batches.create(requests=build_requests(documents))
+    # Poll in background, results in the morning`}</code></pre>
+    </>
+  }
+  explanation="The Batch API's latency (minutes to hours) makes it unsuitable for user-facing interactions. Use it exclusively for offline, high-volume processing where latency is not a constraint."
+/>
+
+<KeyTakeaway>
+- Batch API: up to 10,000 requests per batch, ~50% cost reduction, results in minutes to hours (not milliseconds)
+- Use for offline, high-volume processing — not for user-facing requests where latency matters
+- Each request needs a unique `custom_id` to match results back to inputs
+- Poll `batch.processing_status` until `"ended"`, or configure a webhook
+- Result types: `succeeded` (extract from `result.message`), `errored` (log and retry), `expired` (retry in new batch)
+- Batch results are streamed via `client.beta.messages.batches.results(batch_id)` — not returned as a list
+- For production pipelines, write results to JSONL as they stream to avoid memory issues with large batches
+</KeyTakeaway>

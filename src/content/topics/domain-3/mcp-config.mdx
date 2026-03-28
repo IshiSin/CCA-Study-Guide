@@ -1,0 +1,340 @@
+---
+title: "MCP Configuration"
+description: "Configuring MCP servers for Claude Code via .mcp.json and settings.json — scopes, transport options, environment variables, and security considerations."
+estimatedMinutes: 20
+domain: 3
+---
+
+Claude Code connects to MCP servers through configuration files. Understanding where these files live, how they layer, and what each field controls is essential for setting up tools reliably — and for the exam.
+
+## Configuration Scopes
+
+MCP server configuration exists at three scopes, loaded in order:
+
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">MCP Configuration Scopes</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-emerald-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-mono text-emerald-400 font-semibold w-1/4">Scope</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-2/5">File Location</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/3">Use Case</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-emerald-400">Project</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">.mcp.json (repo root)</td>
+        <td className="px-4 py-3 text-muted-foreground">Shared with team via git — project-specific tools</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-emerald-400">User</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">~/.claude/settings.json</td>
+        <td className="px-4 py-3 text-muted-foreground">Personal tools available in all projects</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-emerald-400">Global</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">~/.claude/settings.json (mcpServers)</td>
+        <td className="px-4 py-3 text-muted-foreground">System-wide defaults — same file as user settings</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<ExamTip>
+The exam focuses on the distinction between **project-level** (`.mcp.json` in the repo) and **user-level** (`~/.claude/settings.json`) configuration. Project-level is committed to git and shared; user-level is personal and not shared. Both use the same JSON schema for the `mcpServers` block.
+</ExamTip>
+
+---
+
+## `.mcp.json` — Project-Level Configuration
+
+`.mcp.json` lives at the repository root and is committed to git. Every developer who clones the repo gets the same MCP server configuration:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "DATABASE_URL": "${DATABASE_URL}"
+      }
+    },
+    "project-tools": {
+      "command": "python",
+      "args": ["-m", "tools.mcp_server"],
+      "cwd": "${workspaceRoot}/tools"
+    }
+  }
+}
+```
+
+The top-level key is always `"mcpServers"`. Each value is a server definition with:
+
+| Field | Required | Description |
+|---|---|---|
+| `command` | Yes | The executable to run (launches the MCP server process) |
+| `args` | No | Command-line arguments passed to the command |
+| `env` | No | Environment variables for the server process |
+| `cwd` | No | Working directory for the server process |
+
+---
+
+## `~/.claude/settings.json` — User-Level Configuration
+
+User-level MCP servers go in `~/.claude/settings.json` under the same `mcpServers` key:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/projects"],
+    },
+    "brave-search": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": {
+        "BRAVE_API_KEY": "BSA..."
+      }
+    }
+  },
+  "theme": "dark",
+  "model": "claude-opus-4-6"
+}
+```
+
+These servers are available in every project. They combine with any `.mcp.json` found in the project — you get both.
+
+---
+
+## Environment Variable Substitution
+
+Sensitive values (API keys, database URLs) should never be hardcoded in `.mcp.json` — it gets committed to git. Use environment variable references:
+
+```json
+{
+  "mcpServers": {
+    "stripe": {
+      "command": "node",
+      "args": ["./tools/stripe-mcp/index.js"],
+      "env": {
+        "STRIPE_SECRET_KEY": "${STRIPE_SECRET_KEY}",
+        "STRIPE_WEBHOOK_SECRET": "${STRIPE_WEBHOOK_SECRET}"
+      }
+    }
+  }
+}
+```
+
+The `${VAR_NAME}` syntax substitutes from the shell environment at launch time. Developers set their own values in `.env` (gitignored) or in their shell profile:
+
+```bash
+# .env (gitignored)
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+
+# Or in shell profile
+export GITHUB_TOKEN=ghp_...
+```
+
+<Callout variant="info" title="Never commit secrets to .mcp.json">
+`.mcp.json` is committed to git. Any literal API key in this file is exposed to everyone with repo access, including potentially public GitHub repositories. Always use `${ENV_VAR}` references for sensitive values.
+</Callout>
+
+---
+
+## Transport Configuration
+
+### stdio (default for local servers)
+
+When `command` is specified, Claude Code spawns the process and communicates via stdin/stdout. This is the stdio transport — standard for local tools:
+
+```json
+{
+  "mcpServers": {
+    "my-tool": {
+      "command": "python",
+      "args": ["./mcp_server.py"]
+    }
+  }
+}
+```
+
+### HTTP + SSE (for remote servers)
+
+For servers running as HTTP services (remote or in a container), use the `url` field instead of `command`:
+
+```json
+{
+  "mcpServers": {
+    "remote-analytics": {
+      "url": "https://mcp.internal.company.com/analytics",
+      "headers": {
+        "Authorization": "Bearer ${ANALYTICS_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Transport Comparison</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-emerald-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/4">Transport</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/4">Config Field</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/2">Best For</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-emerald-400">stdio</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-sm">command + args</td>
+        <td className="px-4 py-3 text-muted-foreground">Local processes, CLI tools, scripts</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-emerald-400">HTTP/SSE</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-sm">url + headers</td>
+        <td className="px-4 py-3 text-muted-foreground">Remote servers, cloud services, team-shared services</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+---
+
+## Complete `.mcp.json` Example
+
+A realistic project configuration with multiple servers:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "postgres-dev": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "${DATABASE_URL}"
+      ]
+    },
+    "project-scripts": {
+      "command": "node",
+      "args": ["./scripts/mcp-tools/index.js"],
+      "cwd": "${workspaceRoot}",
+      "env": {
+        "NODE_ENV": "development",
+        "LOG_LEVEL": "info"
+      }
+    },
+    "docs": {
+      "url": "https://docs-mcp.internal.company.com",
+      "headers": {
+        "X-API-Key": "${DOCS_MCP_KEY}"
+      }
+    }
+  }
+}
+```
+
+---
+
+## Server Naming and Tool Namespacing
+
+When multiple MCP servers are configured, their tools are namespaced by server name to avoid collisions. If two servers both expose a `search` tool:
+
+```
+github/search       ← from the "github" server
+docs/search         ← from the "docs" server
+```
+
+This is why server names in the config key matter — use descriptive, stable names. Renaming a server name in `.mcp.json` changes how its tools are referenced.
+
+---
+
+## Verifying MCP Configuration
+
+```bash
+# List all configured MCP servers and their status
+claude mcp list
+
+# Add a server interactively
+claude mcp add
+
+# Test a specific server
+claude mcp test github
+
+# View server logs for debugging
+claude mcp logs github
+```
+
+<AntiPatternCard
+  title="Hardcoding secrets in .mcp.json"
+  wrong={
+    <>
+      <p>Embedding API keys directly in the committed config:</p>
+      <pre><code>{`{
+  "mcpServers": {
+    "stripe": {
+      "command": "node",
+      "args": ["./stripe-mcp/index.js"],
+      "env": {
+        "STRIPE_SECRET_KEY": "sk_live_abc123xyz...",
+        "DATABASE_URL": "postgresql://prod-user:password@prod.db.internal/app"
+      }
+    }
+  }
+}
+// .mcp.json is committed to git — this key is now in version history
+// even after you delete it from the file. Rotate the key immediately.`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Reference environment variables — the actual values live outside the repo:</p>
+      <pre><code>{`{
+  "mcpServers": {
+    "stripe": {
+      "command": "node",
+      "args": ["./stripe-mcp/index.js"],
+      "env": {
+        "STRIPE_SECRET_KEY": "\${STRIPE_SECRET_KEY}",
+        "DATABASE_URL": "\${DATABASE_URL}"
+      }
+    }
+  }
+}
+// Developers set STRIPE_SECRET_KEY in their shell or .env (gitignored)
+// CI sets it via secrets management
+// The key never touches version control`}</code></pre>
+    </>
+  }
+  explanation=".mcp.json is committed to git. Literal secret values in this file are exposed to everyone with repository access and remain in git history even after removal. Always use ${ENV_VAR} references."
+/>
+
+<KeyTakeaway>
+- `.mcp.json` in repo root = project-level config, committed to git, shared with team
+- `~/.claude/settings.json` mcpServers = user-level config, personal, available in all projects
+- stdio transport: use `command` + `args` to spawn a local process
+- HTTP/SSE transport: use `url` + optional `headers` for remote servers
+- Use `${ENV_VAR}` syntax for secrets — never hardcode API keys in `.mcp.json`
+- Server names in config become the namespace for that server's tools
+- `claude mcp list` / `claude mcp test <name>` for verifying and debugging configuration
+</KeyTakeaway>

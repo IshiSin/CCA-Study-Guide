@@ -1,0 +1,223 @@
+import type { QuizQuestion } from '@/lib/types'
+
+export const domain5Questions: QuizQuestion[] = [
+  // ── Context Window ────────────────────────────────────────────────────────
+  {
+    id: 'd5-q1',
+    domain: 5,
+    scenario: 'data-pipeline',
+    question: 'A developer sets `max_tokens=4096` when calling Claude with a 196,000-token prompt on a 200K-context model. How many tokens are available for Claude\'s response?',
+    options: {
+      A: '200,000 — max_tokens is additive to the context window',
+      B: '4,096 — max_tokens is reserved from the context window for output',
+      C: '0 — the 196,000-token prompt has filled the window, leaving no room for output',
+      D: '4,000 — a small buffer is always subtracted from max_tokens',
+    },
+    correct: 'B',
+    explanation: {
+      correct: 'The context window is shared between input and output. `max_tokens=4096` reserves 4,096 tokens of the 200,000-token window for the response. With a 196,000-token prompt, 4,000 tokens remain. Since max_tokens=4096 ≤ available 4,000, the response has 4,096 tokens budgeted (and ~4,000 actually usable). max_tokens is a cap, not an addition — it cannot exceed what the window allows.',
+      A: 'max_tokens is not additive — input + output must fit within the context window.',
+      B: 'Correct — max_tokens reserves output budget from the shared context window.',
+      C: '196,000 token prompt + 4,096 output = 200,096 which slightly exceeds the window, so the model would truncate or refuse.',
+      D: 'There is no automatic buffer subtraction from max_tokens.',
+    },
+    relatedTopic: '/study/domain-5/context-window',
+  },
+  {
+    id: 'd5-q2',
+    domain: 5,
+    scenario: 'code-review',
+    question: 'A Claude Code session has been running for 2 hours, processing a large codebase. The developer notices Claude is suggesting changes that were already made earlier in the session. What is the most likely cause and fix?',
+    options: {
+      A: 'Claude has a bug — restart the application',
+      B: 'Context degradation — the earlier work has moved to the "lost middle" of the context. Use /compact to summarize session history',
+      C: 'The file edits were not saved — run git status to check',
+      D: 'Claude intentionally suggests alternatives to previously accepted changes',
+    },
+    correct: 'B',
+    explanation: {
+      correct: 'In a long session, earlier conversation turns move toward the middle of the context window where attention is weakest (the lost-in-the-middle effect). Claude may "forget" changes made 50K tokens ago. Running `/compact` summarizes the conversation history into a dense state representation, replacing verbose history with a compact summary of what was done — resetting the attention problem.',
+      A: 'This is an expected behavior in long sessions, not a bug.',
+      B: 'Correct — context degradation causes repetition of already-done work. `/compact` is the fix.',
+      C: 'File edits persist on disk — they are not the issue.',
+      D: 'Claude does not intentionally re-suggest rejected changes.',
+    },
+    relatedTopic: '/study/domain-5/context-degradation',
+  },
+
+  // ── Context Degradation ───────────────────────────────────────────────────
+  {
+    id: 'd5-q3',
+    domain: 5,
+    scenario: 'devops-agent',
+    question: 'A system prompt at the start of a session says "always use async/await, never .then() chains." By turn 40, Claude is generating .then() chains despite the instruction. What is this phenomenon called and what is the best mitigation?',
+    options: {
+      A: 'Model regression — roll back to an older Claude version',
+      B: 'Instruction forgetting due to the lost-in-the-middle effect — repeat critical constraints in the system prompt AND in recent user messages before critical tasks',
+      C: 'Context overflow — reduce the number of conversation turns',
+      D: 'Tool conflict — the agent\'s tools are overriding the system prompt',
+    },
+    correct: 'B',
+    explanation: {
+      correct: 'Instruction forgetting is a manifestation of the lost-in-the-middle effect: content at positions far from the start or end of the context window receives weaker attention. By turn 40, the system prompt instruction is present but not strongly attended. The mitigation is to keep critical constraints in the system prompt (strong position) AND re-anchor them in recent user messages before key tasks: "[Reminder: use async/await] Now implement..."',
+      A: 'This is not model regression — it is a well-documented attention distribution phenomenon.',
+      B: 'Correct — lost-in-the-middle effect + mitigation via re-anchoring in both system prompt and recent messages.',
+      C: 'Reducing turns does not address the root cause — the instruction needs to be repositioned.',
+      D: 'Tools do not override system prompt instructions.',
+    },
+    relatedTopic: '/study/domain-5/context-degradation',
+  },
+
+  // ── Escalation Design ─────────────────────────────────────────────────────
+  {
+    id: 'd5-q4',
+    domain: 5,
+    scenario: 'payments-api',
+    question: 'An agent is authorized to process refunds up to $50. A customer requests a $2,300 refund. What is the correct agent behavior?',
+    options: {
+      A: 'Process the refund — customer satisfaction is the priority',
+      B: 'Decline the refund without explanation',
+      C: 'Escalate to a human with context: amount requested, why it exceeds authority, and customer details',
+      D: 'Process the refund in multiple smaller transactions under $50 each',
+    },
+    correct: 'C',
+    explanation: {
+      correct: 'The refund exceeds the agent\'s sanctioned authority ($50 limit). The correct response is to escalate — not to decline outright or find workarounds. The escalation should include full context: the amount ($2,300), why it exceeds the threshold, the customer\'s details, and any relevant order information. This gives the human everything needed to make a decision immediately.',
+      A: 'Acting outside sanctioned authority (even with good intent) undermines the control structure.',
+      B: 'Declining without escalation leaves a valid customer issue unresolved and without human review.',
+      C: 'Correct — escalate with full context when the action exceeds authority.',
+      D: 'Splitting transactions to stay under the limit is a deliberate circumvention of the policy — an anti-pattern.',
+    },
+    relatedTopic: '/study/domain-5/escalation-design',
+  },
+  {
+    id: 'd5-q5',
+    domain: 5,
+    scenario: 'devops-agent',
+    question: 'A deployment agent escalates every action — reading config files, running tests, checking git status. What problem does this cause?',
+    options: {
+      A: 'Over-escalation — the agent disrupts human workflow with unnecessary approval requests for safe, reversible actions',
+      B: 'Under-escalation — the agent should have even more escalation points',
+      C: 'The escalation is correct — production systems always require human approval',
+      D: 'Escalation causes API rate limiting',
+    },
+    correct: 'A',
+    explanation: {
+      correct: 'Over-escalation is when an agent asks for human approval for safe, reversible, low-risk actions (reading files, running tests) that clearly fall within its authority. This creates alert fatigue, slows workflows, and defeats the purpose of automation. Escalation should be calibrated: autonomous for routine read-only actions, escalated only for high-risk or irreversible ones.',
+      A: 'Correct — over-escalation makes the agent useless by requiring constant human attention for trivial actions.',
+      B: 'More escalation points would worsen the problem.',
+      C: 'Not all production actions require human approval — read-only operations are safe to automate.',
+      D: 'API rate limits are triggered by request volume, not escalation frequency.',
+    },
+    relatedTopic: '/study/domain-5/escalation-design',
+  },
+  {
+    id: 'd5-q6',
+    domain: 5,
+    scenario: 'data-pipeline',
+    question: 'An agent discovers that fulfilling its assigned task requires deleting 2.3 million database records. It was asked to "clean up test data." What should it do before proceeding?',
+    options: {
+      A: 'Proceed — the task was approved and this is clearly test data',
+      B: 'Escalate with specific context: records affected (2.3M), irreversibility of deletion, and ask for explicit confirmation',
+      C: 'Delete 100 records as a test, then proceed if no one complains',
+      D: 'Refuse the task — deletion of any production records is outside agent authority',
+    },
+    correct: 'B',
+    explanation: {
+      correct: 'Deleting 2.3M records is irreversible at a large scale — even if the task was "clean up test data," the discovered scope may far exceed what was anticipated. Blast radius (2.3M records) and irreversibility both trigger escalation. The escalation must be specific: how many records, what\'s being deleted, why it cannot be undone, and a request for explicit confirmation before proceeding.',
+      A: 'The scope (2.3M records) far exceeds what "clean up test data" likely implied — scope expansion requires re-confirmation.',
+      B: 'Correct — irreversible + large blast radius = mandatory escalation with specific context.',
+      C: 'A 100-record test does not address the approval needed for the full 2.3M scope.',
+      D: 'Refusing entirely is wrong — the task may be valid; it just needs explicit approval given the scale.',
+    },
+    relatedTopic: '/study/domain-5/escalation-design',
+  },
+
+  // ── Human-in-the-Loop ─────────────────────────────────────────────────────
+  {
+    id: 'd5-q7',
+    domain: 5,
+    scenario: 'devops-agent',
+    question: 'A deployment agent monitors infrastructure changes and can cancel any action within 30 seconds of it being queued, but does not pre-approve them. What HITL pattern is this?',
+    options: {
+      A: 'Human-in-the-loop — human approves before every action',
+      B: 'Human-on-the-loop — human monitors and can intervene but actions proceed unless cancelled',
+      C: 'Fully autonomous — no human involvement',
+      D: 'Approval gate — human must approve each step',
+    },
+    correct: 'B',
+    explanation: {
+      correct: 'Human-on-the-loop means the agent proceeds unless the human intervenes within a review window. In this pattern, actions are queued and proceed after 30 seconds if not cancelled — the human monitors but does not pre-approve each action. Human-in-the-loop (A) requires explicit approval before execution. Approval gate (D) is a blocking checkpoint, not a review window.',
+      A: 'Human-in-the-loop requires explicit pre-approval — this pattern allows auto-execution after the window.',
+      B: 'Correct — human can monitor and cancel but actions self-execute if not cancelled.',
+      C: 'The 30-second cancel window and monitoring are HITL elements — not fully autonomous.',
+      D: 'An approval gate is a blocking checkpoint — this is non-blocking with a cancel window.',
+    },
+    relatedTopic: '/study/domain-5/human-in-the-loop',
+  },
+  {
+    id: 'd5-q8',
+    domain: 5,
+    scenario: 'payments-api',
+    question: 'An agent needs human approval for a large payment. The confirmation message reads: "A payment needs processing. Please confirm." What is wrong with this escalation message?',
+    options: {
+      A: 'Nothing — brief messages are more likely to be read',
+      B: 'The message does not include the payment amount, recipient, reason, or options — the human cannot make an informed decision',
+      C: 'Confirmation messages must be sent via email, not in the chat interface',
+      D: 'The message should include the full conversation history',
+    },
+    correct: 'B',
+    explanation: {
+      correct: 'A good confirmation request surfaces the decision, not just the problem. "A payment needs processing" does not include: how much, to whom, for what, alternative options, or urgency. The human must investigate to find this information before they can decide. A well-designed escalation includes: amount, recipient, reason, options (approve/reject/request more info), and any time sensitivity.',
+      A: 'Brevity is good but not at the expense of the information needed to decide.',
+      B: 'Correct — escalation messages must include all context needed for an immediate decision.',
+      C: 'Channel preference is a UX choice — the content problem is the issue here.',
+      D: 'Full conversation history is too verbose — a structured summary of the decision is what\'s needed.',
+    },
+    relatedTopic: '/study/domain-5/human-in-the-loop',
+  },
+
+  // ── Error Propagation ─────────────────────────────────────────────────────
+  {
+    id: 'd5-q9',
+    domain: 5,
+    scenario: 'research-assistant',
+    question: 'A subagent\'s API call times out. It catches the TimeoutError and returns an empty string `""`. The coordinator receives `""` and reports the task as successful with no results. What anti-pattern is this?',
+    options: {
+      A: 'Over-escalation — the subagent should have retried before returning',
+      B: 'Silent failure — the empty string is indistinguishable from "zero results found" vs. "error occurred"',
+      C: 'Coordinator error — the coordinator should validate non-empty results',
+      D: 'Protocol error — subagents must raise exceptions for timeouts',
+    },
+    correct: 'B',
+    explanation: {
+      correct: 'Returning `""` on error is silent failure — the coordinator cannot distinguish "the API returned zero results" from "an error occurred and the result is meaningless." The coordinator reports success because it received a value (even empty). The fix: return a structured error object with `success=False`, `error_code="TIMEOUT"`, `retryable=True` so the coordinator can make an informed recovery decision.',
+      A: 'The retry decision should be made by the coordinator, not the subagent — the subagent should report the error.',
+      B: 'Correct — silent failure via empty return makes error indistinguishable from legitimate empty result.',
+      C: 'Coordinator validation helps, but the root fix is structured error returns from subagents.',
+      D: 'Exceptions are for protocol-level errors. TimeoutError of an expected operation is a content error — return structured error, not exception.',
+    },
+    relatedTopic: '/study/domain-5/error-propagation',
+  },
+  {
+    id: 'd5-q10',
+    domain: 5,
+    scenario: 'data-pipeline',
+    question: 'A 5-task pipeline DAG: A and B run in parallel → C depends on both → D is independent → E depends on C. Task B fails. Which tasks should be cancelled?',
+    options: {
+      A: 'All tasks — any failure aborts the pipeline',
+      B: 'Only C and E — they depend on B\'s output; A and D are unaffected and should complete',
+      C: 'Only C — E should run anyway in case C\'s dependency on B is soft',
+      D: 'None — the pipeline should retry B until it succeeds',
+    },
+    correct: 'B',
+    explanation: {
+      correct: 'In a DAG pipeline, failures should only affect downstream dependents. B fails → C depends on B → C cannot run → E depends on C → E cannot run. A was in parallel with B (no dependency) and should complete. D is fully independent and should complete. Cascading failure beyond the dependency boundary wastes valid completed work.',
+      A: 'Full pipeline abort discards A\'s valid work and D\'s independent work — unnecessarily destructive.',
+      B: 'Correct — cancel only C (depends on B) and E (depends on C). A and D complete normally.',
+      C: 'E depends on C which depends on B — if B fails, C cannot produce valid output for E.',
+      D: 'Infinite retry blocks the entire pipeline. The coordinator should decide retry vs. fail based on policy.',
+    },
+    relatedTopic: '/study/domain-5/error-propagation',
+  },
+]

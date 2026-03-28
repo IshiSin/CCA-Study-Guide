@@ -1,0 +1,292 @@
+---
+title: "Context Degradation"
+description: "How model performance declines as context fills — the lost-in-the-middle effect, instruction forgetting, and mitigation strategies."
+estimatedMinutes: 15
+domain: 5
+---
+
+**Context degradation** is the phenomenon where model reliability declines as the context window fills up. A Claude session that starts crisp and accurate can drift — instructions get ignored, earlier decisions are forgotten, reasoning quality drops — not because the model changed, but because of how attention distributes across a long context.
+
+## Why Degradation Happens
+
+Transformer models attend to all tokens, but not equally. Research consistently shows that tokens at the **beginning** and **end** of context receive stronger attention than tokens in the **middle**. In long sessions:
+
+- System prompt instructions (at the top) remain strong
+- The most recent exchange (at the bottom) is highly attended
+- Content in the middle — earlier task constraints, established decisions, prior tool results — fades
+
+This is the **lost-in-the-middle effect**: important context injected early or in the middle of a long session may effectively disappear from the model's working memory, even though it is technically still present.
+
+```
+Context Window (simplified attention weights):
+
+[SYSTEM PROMPT]        ← Strong attention ████████████
+[Early task context]   ← Fading          ████░░░░░░░░
+[Mid-session work]     ← Weak            ██░░░░░░░░░░
+[Recent exchange]      ← Strong          ████████████
+[Current message]      ← Strongest       ████████████████
+```
+
+<ExamTip>
+The exam tests that you can identify context degradation symptoms and prescribe the correct mitigation. The key insight: more tokens does not mean better memory. A 180K-token context can have worse recall of a 50K-position fact than a fresh 5K-token context containing only that fact.
+</ExamTip>
+
+---
+
+## Symptoms of Context Degradation
+
+Knowing the signs helps you detect degradation before it causes silent failures:
+
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Degradation Symptoms</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-red-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/3">Symptom</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-2/3">What it looks like</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Instruction forgetting</td>
+        <td className="px-4 py-3 text-muted-foreground">Model stops following rules established early in the session (e.g., "always use TypeScript" → starts generating JavaScript)</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Decision reversal</td>
+        <td className="px-4 py-3 text-muted-foreground">Re-introduces an approach that was explicitly rejected earlier in the session</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Repetition</td>
+        <td className="px-4 py-3 text-muted-foreground">Suggests changes that have already been made; "forgets" what tools have already done</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Reasoning drift</td>
+        <td className="px-4 py-3 text-muted-foreground">Responses become less precise, more hedged, or start contradicting earlier conclusions</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Tool misuse</td>
+        <td className="px-4 py-3 text-muted-foreground">Calls tools with arguments that were already tried and failed; ignores earlier tool results</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+### Degradation in Practice
+
+Here is what instruction forgetting looks like in a real coding session. The system prompt said: *"Always use TypeScript. Never generate JavaScript."*
+
+```
+[Turn 1 — fresh context, ~2K tokens]
+User: Create a utility function to debounce API calls.
+Claude: // TypeScript ✓
+        export function debounce<T extends (...args: unknown[]) => void>(
+          fn: T, delay: number
+        ): (...args: Parameters<T>) => void { ... }
+
+[Turn 15 — context now ~80K tokens, rule is deep in the middle]
+User: Add a memoize helper next to it.
+Claude: function memoize(fn) {   // ← plain JavaScript, no types
+          const cache = {};       // ← instruction forgotten
+          ...
+        }
+```
+
+The rule didn't change. The model didn't "decide" to ignore it. The system prompt is still in context — but at 80K tokens in, the signal from that instruction competes with 80K tokens of subsequent content and loses. The fix is to re-anchor the rule in the current user message.
+
+---
+
+## Mitigation Strategies
+
+### 1. Re-anchor Critical Instructions
+
+Place must-follow constraints in the system prompt (always attended) **and** repeat them in the most recent user message when they are critical:
+
+```python
+system = """
+You are a code review assistant.
+STRICT RULES (always apply):
+- Never suggest changes outside the file being reviewed
+- Always cite line numbers for every finding
+- Output format: JSON array of {file, line, severity, description}
+"""
+
+# In a long session, re-anchor before the critical task:
+user_message = """
+[Reminder of output format: JSON array, include line numbers, file-scoped only]
+
+Now review this file: src/auth/middleware.ts
+```
+<file content here>
+"""
+```
+
+### 2. Periodic State Snapshots
+
+Instead of relying on the model to remember decisions from 50K tokens ago, explicitly re-state current state at key points:
+
+```python
+def build_snapshot(decisions: dict, completed: list[str], current_task: str) -> str:
+    """Generate a context snapshot to inject at the start of each major step."""
+    return f"""
+## Current Session State (re-injected for reliability)
+
+### Decisions Made
+{chr(10).join(f"- {k}: {v}" for k, v in decisions.items())}
+
+### Completed Steps
+{chr(10).join(f"- {step}" for step in completed)}
+
+### Current Task
+{current_task}
+
+---
+"""
+
+# Use at the start of each agent loop iteration
+snapshot = build_snapshot(
+    decisions={"auth_strategy": "JWT", "db_orm": "Prisma", "test_runner": "Vitest"},
+    completed=["scaffolded project", "set up database", "implemented auth"],
+    current_task="Implement the user profile endpoint"
+)
+```
+
+### 3. Compact Before Critical Steps
+
+In Claude Code, run `/compact` before starting a high-stakes phase of a long session. The compacted summary replaces verbose history with a dense state representation:
+
+```
+[After a long exploratory phase]
+
+User: /compact
+
+[Context compacted — key decisions and file states preserved]
+
+User: Now implement the payment integration we discussed.
+Claude: [Has access to decisions, not the full verbose history]
+```
+
+### 4. Session Chunking
+
+For very long tasks, break the session into independent chunks with explicit handoffs:
+
+```python
+def run_in_chunks(task_list: list[str], context_threshold: int = 100_000):
+    """
+    Run tasks in chunks. Start a fresh session when context grows large.
+    Pass a handoff document between sessions.
+    """
+    client = anthropic.Anthropic()
+    messages = []
+    handoff_doc = "# Session Handoff\n\nStarting fresh.\n"
+
+    for task in task_list:
+        # Check current context size
+        token_count = client.messages.count_tokens(
+            model="claude-opus-4-6",
+            messages=messages + [{"role": "user", "content": task}]
+        ).input_tokens
+
+        if token_count > context_threshold:
+            # Generate handoff and start fresh
+            handoff_doc = generate_handoff(client, messages)
+            messages = [
+                {"role": "user", "content": f"Continuing from previous session:\n\n{handoff_doc}"},
+                {"role": "assistant", "content": "Understood. I'll continue from where we left off."},
+            ]
+
+        messages.append({"role": "user", "content": task})
+        response = client.messages.create(
+            model="claude-opus-4-6",
+            max_tokens=4096,
+            messages=messages,
+        )
+        result = response.content[0].text
+        messages.append({"role": "assistant", "content": result})
+
+    return messages
+
+
+def generate_handoff(client, messages: list[dict]) -> str:
+    """Distill current session into a compact handoff document."""
+    response = client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=2000,
+        messages=messages + [{
+            "role": "user",
+            "content": (
+                "Write a session handoff document for a fresh Claude session that will continue this work. "
+                "Include: decisions made, work completed, files modified, current state, and next steps. "
+                "Be specific and include file paths, function names, and exact decisions."
+            )
+        }]
+    )
+    return response.content[0].text
+```
+
+### 5. Put Critical Content at Position Extremes
+
+Because attention is strongest at the start and end of context, structure long prompts accordingly:
+
+```python
+def build_degradation_resistant_prompt(
+    system_rules: str,
+    background_context: str,
+    task: str,
+) -> dict:
+    return {
+        "system": system_rules,   # Always at position 0 — strong attention
+        "messages": [
+            # Background goes in the middle (less critical — can be re-fetched if forgotten)
+            {"role": "user", "content": background_context},
+            {"role": "assistant", "content": "I've reviewed the background context."},
+            # Task goes last — strong attention, most recently seen
+            {"role": "user", "content": task},
+        ]
+    }
+```
+
+<AntiPatternCard
+  title="Injecting all context upfront and trusting it persists"
+  wrong={
+    <>
+      <p>Front-loading all constraints and assuming they stay active throughout a long session:</p>
+      <pre><code>{`messages = [
+    {"role": "user", "content": (
+        "IMPORTANT: Only use the repository pattern. "
+        "IMPORTANT: All methods must be async. "
+        "IMPORTANT: Use dependency injection, not singletons. "
+        + very_large_codebase_dump  # 80,000 tokens of code
+    )},
+    # ... 50 more turns of tool calls and responses ...
+    {"role": "user", "content": "Now implement the user service."}
+]
+# By turn 50, the "IMPORTANT" instructions are in the lost middle.
+# Claude may implement singletons and sync methods.`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Keep critical constraints in the system prompt and re-anchor before key tasks:</p>
+      <pre><code>{`system = """
+ALWAYS: repository pattern, async methods, dependency injection.
+Never use singletons. Never use sync I/O.
+"""
+# ... long session runs ...
+# Before a critical implementation step:
+messages.append({"role": "user", "content": (
+    "[Architecture reminder: repository pattern, async, DI — no singletons]\\n\\n"
+    "Now implement the user service."
+)})`}</code></pre>
+    </>
+  }
+  explanation="System prompts receive strong attention throughout the session. Mid-context instructions fade. Re-anchor critical constraints in the system prompt and repeat them in recent turns before critical tasks."
+/>
+
+<KeyTakeaway>
+- Context degradation is real: performance declines as context fills, especially for mid-context content
+- Root cause: the lost-in-the-middle effect — attention is strongest at context start and end
+- Symptoms: instruction forgetting, decision reversal, repetition, reasoning drift, tool misuse
+- Mitigations: system prompt for critical rules, state snapshots, `/compact` before key steps, session chunking
+- Structure prompts so critical content lands at position extremes (system prompt or most recent message)
+- For very long tasks, chunk into sessions with explicit handoff documents rather than one unbounded session
+</KeyTakeaway>

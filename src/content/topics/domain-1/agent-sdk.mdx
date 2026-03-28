@@ -1,0 +1,279 @@
+---
+title: "Claude Agent SDK"
+description: "Core SDK concepts — Agent, tool decorator, lifecycle hooks, guardrails, and complete implementation patterns."
+estimatedMinutes: 30
+domain: 1
+---
+
+The **Claude Agent SDK** (`anthropic.agents`) provides high-level abstractions over the raw Messages API for building production agents. It manages the agentic loop, tool dispatch, and lifecycle events.
+
+## Core Components
+
+| Component | Purpose |
+|---|---|
+| `Agent` | Manages the agentic loop and tool dispatch |
+| `@tool` | Decorator to register a Python function as a tool |
+| `AgentHooks` | Lifecycle callbacks: observe and control loop execution |
+| `AgentEvent` | Streaming events emitted during the loop |
+| `SubAgent` | Spawns a child agent with isolated context |
+
+---
+
+## The `@tool` Decorator
+
+Tools are plain Python functions decorated with `@tool`. The decorator extracts the function signature and docstring to generate the tool schema automatically.
+
+```python
+import anthropic
+from anthropic.agents import tool
+
+# The docstring becomes the tool description — write it carefully
+@tool
+def get_weather(location: str, unit: str = "celsius") -> str:
+    """
+    Get current weather for a location.
+
+    Args:
+        location: City name or coordinates (e.g. "London" or "51.5,-0.1")
+        unit: Temperature unit — "celsius" or "fahrenheit"
+
+    Returns:
+        JSON string with temperature, conditions, and humidity
+    """
+    # Implementation
+    return f'{{"location": "{location}", "temp": 18, "unit": "{unit}", "conditions": "cloudy"}}'
+
+@tool
+def create_calendar_event(
+    title: str,
+    date: str,  # ISO 8601: "2024-03-15"
+    duration_minutes: int,
+    attendees: list[str],
+) -> str:
+    """
+    Create a calendar event and send invitations.
+
+    Returns:
+        JSON with event_id and confirmation status for each attendee
+    """
+    event_id = "evt_abc123"
+    return f'{{"event_id": "{event_id}", "status": "created", "invited": {len(attendees)}}}'
+```
+
+<ExamTip>
+The exam tests tool description quality. A tool description must tell Claude **when to use it**, **what inputs to provide**, and **what it returns**. Vague descriptions like "does weather stuff" cause the model to either never call the tool or call it incorrectly. The description is part of the prompt — write it like documentation.
+</ExamTip>
+
+---
+
+## The `Agent` Class
+
+```python
+from anthropic.agents import Agent
+
+client = anthropic.Anthropic()
+
+agent = Agent(
+    client=client,
+    model="claude-opus-4-5",        # Model for reasoning
+    system="""You are a scheduling assistant.
+    Help users book meetings by checking weather and creating calendar events.
+    Always confirm details before creating events.""",
+    tools=[get_weather, create_calendar_event],
+    max_tokens=4096,                 # Max tokens per response
+)
+
+# Run the agent — returns an iterator of AgentEvents
+result = agent.run("Schedule a team lunch for Friday in London. 12 people.")
+for event in result:
+    if event.type == "message":
+        print(event.content)
+    elif event.type == "tool_call":
+        print(f"Calling: {event.tool_name}({event.tool_input})")
+
+# Get the final text result
+final_answer = agent.result()
+```
+
+---
+
+## Lifecycle Hooks
+
+`AgentHooks` lets you observe and intervene at every stage of the loop without modifying business logic. This is the correct pattern for cross-cutting concerns.
+
+```python
+from anthropic.agents import AgentHooks, Agent
+import time
+import logging
+
+logger = logging.getLogger(__name__)
+
+class ProductionHooks(AgentHooks):
+    def __init__(self, max_cost_usd: float = 1.0):
+        self.max_cost_usd = max_cost_usd
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        self.start_time = None
+        self.tool_call_count = 0
+
+    # Called before the first iteration
+    def on_start(self, agent: Agent, initial_message: str):
+        self.start_time = time.time()
+        logger.info(f"Agent started. Goal: {initial_message[:100]}...")
+
+    # Called at the start of each iteration (before Claude reasons)
+    def on_iteration_start(self, iteration: int, context):
+        if iteration > 20:
+            raise RuntimeError("Exceeded maximum iterations")
+        logger.debug(f"Iteration {iteration}, context tokens: {context.token_count}")
+
+    # Called when Claude emits a tool call (before execution)
+    def on_tool_call(self, tool_name: str, tool_input: dict) -> dict | None:
+        self.tool_call_count += 1
+        logger.info(f"Tool call #{self.tool_call_count}: {tool_name}")
+
+        # Return None to proceed; return modified input to override;
+        # raise an exception to abort the tool call
+        if tool_name == "delete_file" and tool_input.get("path", "").startswith("/system"):
+            raise PermissionError(f"Not allowed to delete system files: {tool_input['path']}")
+
+        return None  # Proceed as normal
+
+    # Called after tool execution with the result
+    def on_tool_result(self, tool_name: str, result: str, error: bool):
+        if error:
+            logger.warning(f"Tool error in {tool_name}: {result[:200]}")
+
+    # Called after each Claude response with token usage
+    def on_usage_update(self, input_tokens: int, output_tokens: int):
+        self.total_input_tokens += input_tokens
+        self.total_output_tokens += output_tokens
+
+        # Cost guard (example: claude-opus-4-5 pricing)
+        estimated_cost = (self.total_input_tokens * 15 + self.total_output_tokens * 75) / 1_000_000
+        if estimated_cost > self.max_cost_usd:
+            raise RuntimeError(f"Cost limit exceeded: ${estimated_cost:.4f} > ${self.max_cost_usd}")
+
+    # Called when the agent terminates (any reason)
+    def on_stop(self, reason: str, iterations: int, result: str | None):
+        elapsed = time.time() - self.start_time
+        logger.info(
+            f"Agent stopped. reason={reason}, iterations={iterations}, "
+            f"time={elapsed:.1f}s, tokens={self.total_input_tokens + self.total_output_tokens}"
+        )
+
+
+# Use hooks in the agent
+agent = Agent(
+    client=client,
+    model="claude-opus-4-5",
+    system="You are a helpful assistant.",
+    tools=[get_weather, create_calendar_event],
+    hooks=ProductionHooks(max_cost_usd=0.50),
+)
+```
+
+<Callout variant="info" title="Hook execution order">
+`on_start` → (loop begins) → `on_iteration_start` → `on_tool_call` → `on_tool_result` → `on_usage_update` → back to `on_iteration_start` → ... → `on_stop`
+</Callout>
+
+---
+
+## Guardrails via Hooks
+
+Hooks are the canonical way to implement guardrails — policy enforcement that sits between the model's decision and the action being taken:
+
+```python
+class GuardrailHooks(AgentHooks):
+    BLOCKED_DOMAINS = {"internal.company.com", "admin.company.com"}
+    MAX_FILE_SIZE_MB = 10
+
+    def on_tool_call(self, tool_name: str, tool_input: dict) -> dict | None:
+        # URL access control
+        if tool_name == "fetch_url":
+            from urllib.parse import urlparse
+            domain = urlparse(tool_input.get("url", "")).netloc
+            if domain in self.BLOCKED_DOMAINS:
+                raise PermissionError(f"Access to {domain} is not permitted")
+
+        # File size limit
+        if tool_name == "read_file":
+            import os
+            path = tool_input.get("path", "")
+            if os.path.exists(path):
+                size_mb = os.path.getsize(path) / (1024 * 1024)
+                if size_mb > self.MAX_FILE_SIZE_MB:
+                    raise ValueError(f"File too large: {size_mb:.1f}MB > {self.MAX_FILE_SIZE_MB}MB limit")
+
+        # Data exfiltration prevention
+        if tool_name == "send_email":
+            if tool_input.get("to", "").endswith("@competitor.com"):
+                raise PermissionError("Cannot send email to competitor domains")
+
+        return None  # All checks passed
+```
+
+<AntiPatternCard
+  title="Guardrails in system prompt vs. hooks"
+  wrong={
+    <>
+      <p>Relying on instructions in the system prompt to enforce security policies:</p>
+      <pre><code>{`system = """
+You are a helpful assistant.
+IMPORTANT: Never access internal.company.com
+IMPORTANT: Never send files larger than 10MB
+IMPORTANT: Never email competitors
+"""
+# Model might comply, but this is NOT a security guarantee.
+# Prompt injection or context pressure can override instructions.`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Enforce security policies programmatically in hooks — they always execute:</p>
+      <pre><code>{`class SecurityHooks(AgentHooks):
+    def on_tool_call(self, tool_name, tool_input):
+        # This ALWAYS runs — model cannot override it
+        if tool_name == "fetch_url":
+            if "internal.company.com" in tool_input["url"]:
+                raise PermissionError("Blocked")
+        return None`}</code></pre>
+    </>
+  }
+  explanation="The exam tests this directly: programmatic enforcement (hooks) is always preferred over prompt-based guidance for security and safety policies."
+/>
+
+---
+
+## Sub-Agents
+
+The SDK provides `SubAgent` for spawning child agents with isolated context:
+
+```python
+from anthropic.agents import Agent, SubAgent
+
+class OrchestratorAgent(Agent):
+    async def run_research_subagent(self, topic: str, background: str) -> str:
+        """Spawn a subagent with only the context it needs."""
+        subagent = SubAgent(
+            client=self.client,
+            model="claude-haiku-4-5",     # Cheaper model for subagent
+            system=f"You are a research specialist. Background context: {background}",
+            tools=[search_web, read_document],
+            max_iterations=5,              # Subagent has its own iteration limit
+        )
+        result = await subagent.run_async(f"Research: {topic}")
+        return result.text
+```
+
+<ExamTip>
+When should you use `SubAgent` vs. a direct `client.messages.create` call? Use `SubAgent` when: the subtask needs its own agentic loop (multiple tool calls), you want lifecycle hooks on the subtask, or you need independent error handling. Use `messages.create` directly for single-turn subtasks that don't need tool use.
+</ExamTip>
+
+<KeyTakeaway>
+- `@tool` docstring is the tool description — write it like API documentation, it matters for reliability
+- `AgentHooks` is the correct place for: logging, cost limits, rate limiting, guardrails, audit trails
+- Hook `on_tool_call` can modify input (return modified dict) or abort (raise exception) — use this for security enforcement
+- Guardrails in hooks are programmatic and always execute; guardrails in system prompts rely on model compliance
+- `SubAgent` for multi-turn subtasks with their own loops; `messages.create` for single-turn subtasks
+</KeyTakeaway>

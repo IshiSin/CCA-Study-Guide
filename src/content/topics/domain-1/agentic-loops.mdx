@@ -1,0 +1,334 @@
+---
+title: "Agentic Loops"
+description: "How Claude reasons, acts, and iterates — the core loop lifecycle, stop conditions, and SDK implementation."
+estimatedMinutes: 20
+domain: 1
+---
+
+An `agentic loop` is the fundamental execution pattern of any Claude-based agent. Rather than a single prompt → response, the agent iterates: it reasons about a goal, takes an action (tool call), observes the result, then decides whether to continue or stop.
+
+## The Loop Lifecycle
+
+Every agentic loop passes through four phases per iteration:
+
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Agentic Loop Lifecycle</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-blue-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-mono text-blue-400 font-semibold w-1/5">Phase</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-2/5">Action</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-2/5">Next</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-blue-400 font-semibold">Start</td>
+        <td className="px-4 py-3 text-muted-foreground">User prompt received</td>
+        <td className="px-4 py-3"><span className="font-mono text-blue-400">→ Reason</span></td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-blue-400 font-semibold">Reason</td>
+        <td className="px-4 py-3 text-muted-foreground">Claude decides: tool call or done?</td>
+        <td className="px-4 py-3 text-muted-foreground"><span className="font-mono text-blue-400">→ Act</span> (tool call) or <span className="font-mono text-blue-400">→ Stop</span> (done)</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-blue-400 font-semibold">Act</td>
+        <td className="px-4 py-3 text-muted-foreground">Host executes the tool</td>
+        <td className="px-4 py-3"><span className="font-mono text-blue-400">→ Observe</span></td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-blue-400 font-semibold">Observe</td>
+        <td className="px-4 py-3 text-muted-foreground">Tool result appended to context</td>
+        <td className="px-4 py-3"><span className="font-mono text-blue-400">→ Reason</span></td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-blue-400 font-semibold">Stop</td>
+        <td className="px-4 py-3 text-muted-foreground">Final response returned</td>
+        <td className="px-4 py-3 text-muted-foreground font-mono">—</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+### Phase 1 — Reason
+
+Claude receives the full conversation context (system prompt + history + tool results) and decides what to do next. It may call a tool, ask a clarifying question, or produce a final response.
+
+### Phase 2 — Act
+
+If Claude emits a tool call, the host application executes it. The tool might be a database query, file read, API call, or a sub-agent invocation. Execution happens **outside** Claude — the model only receives the result.
+
+### Phase 3 — Observe
+
+The tool result is appended to the conversation as a `tool_result` message. Claude now has updated context and re-enters the Reason phase.
+
+### Phase 4 — Stop or Continue
+
+The loop ends when **any** stop condition is met. If none are met, the loop continues.
+
+---
+
+## Concrete Walkthrough: Two Iterations
+
+**Goal:** "Check if order #ORD-4521 has shipped, and email the customer if it has."
+
+Available tools: `check_order_status`, `send_email`.
+
+---
+
+**Iteration 1**
+
+**Reason** — Claude sees both tools, recognises it doesn't have order status yet, and emits a tool call:
+
+```json
+{ "name": "check_order_status", "input": { "order_id": "ORD-4521" } }
+```
+
+**Act** — The host executes `check_order_status("ORD-4521")` and gets back:
+
+```json
+{
+  "status": "shipped",
+  "carrier": "FedEx",
+  "tracking": "7489-2341-XX",
+  "customer_email": "alice@example.com"
+}
+```
+
+**Observe** — This result is appended to the conversation as a `tool_result` message. Claude's context now contains the carrier, tracking number, and customer email.
+
+---
+
+**Iteration 2**
+
+**Reason** — Claude now has everything it needs. It decides to send the email and emits:
+
+```json
+{
+  "name": "send_email",
+  "input": {
+    "to": "alice@example.com",
+    "subject": "Your order has shipped!",
+    "body": "Order #ORD-4521 is on its way via FedEx. Tracking number: 7489-2341-XX."
+  }
+}
+```
+
+**Act** — Host executes `send_email(...)`.
+
+**Observe** — Result appended: `{ "status": "sent", "message_id": "msg_8b3f" }`.
+
+**Stop** — No more tool calls are needed. Claude emits its final text response:
+
+> *"Done — order #ORD-4521 has shipped via FedEx (tracking: 7489-2341-XX) and I've sent a notification to alice@example.com."*
+
+The host sees no `tool_use` block in this response, so the loop exits cleanly after 2 iterations.
+
+---
+
+## Stop Conditions
+
+A well-designed loop has **explicit stop conditions**. Never rely solely on Claude deciding to stop.
+
+
+| Stop Condition | When to Use | Implementation |
+|---|---|---|
+| **Goal completion** | Primary exit: Claude signals task done | Check for final response message (no tool calls) |
+| **Max iterations** | Safety ceiling — prevent infinite loops | Counter incremented each iteration |
+| **Error threshold** | Too many consecutive tool failures | Track `consecutive_errors` counter |
+| **Token budget** | Context window approaching limit | Monitor `usage.input_tokens` each turn |
+| **User intervention** | Human-in-the-loop checkpoint | Poll a signal/queue between iterations |
+| **Time limit** | Async/background agents | Wall-clock elapsed time |
+
+<ExamTip>
+The exam tests whether you know that **max_iterations must be set explicitly by the host** — it is not a parameter you pass to the Claude API. Claude itself has no built-in iteration limit. A loop without a host-enforced max_iterations can run indefinitely and exhaust your token budget.
+</ExamTip>
+
+---
+
+## SDK Implementation
+
+The Claude Agent SDK provides the `Agent` class to manage the loop. You implement stop conditions and hooks around it.
+
+Two Python terms come up repeatedly across all the code walkthroughs — here's what they mean:
+
+- **Decorator** (`@something`) — a modifier placed on the line directly above a function. It wraps that function with extra behaviour. `@tool` tells the SDK "register this function as a tool Claude can call." You'll see it before every tool definition.
+- **Docstring** (`"""..."""`) — the string written immediately inside a function, used to describe what it does. In the Agent SDK, the docstring is not just documentation — it becomes the tool description that Claude reads to decide when and how to call that tool.
+
+```python
+import anthropic
+from anthropic.agents import Agent, tool  # import the Agent class and @tool decorator
+
+client = anthropic.Anthropic()  # create the API client (uses ANTHROPIC_API_KEY from env)
+
+# @tool marks this function as a tool Claude can call during the loop
+@tool
+def search_database(query: str) -> str:
+    # docstring becomes the tool description Claude reads to decide when to use it
+    """Search the product database. Returns matching product records as JSON."""
+    return f'{{"results": ["Product A", "Product B"], "query": "{query}"}}'
+
+# a second tool — Claude will choose between these based on the task
+@tool
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email. Returns delivery confirmation."""
+    return f'{{"status": "sent", "to": "{to}"}}'
+
+# the function that starts the agent and runs the loop
+def run_agent(user_goal: str, max_iterations: int = 10) -> str:
+    # create the Agent, wiring together the client, model, system prompt, and tools
+    agent = Agent(
+        client=client,
+        model="claude-opus-4-5",
+        system="You are a helpful assistant with access to a product database and email tool.",
+        tools=[search_database, send_email],  # only these tools are available to Claude
+    )
+
+    iteration = 0          # counts how many loop iterations have run
+    consecutive_errors = 0 # counts back-to-back tool failures
+
+    # agent.run() yields events as the loop executes — one event per thing that happens
+    for event in agent.run(user_goal):
+
+        # fired at the start of each Reason → Act → Observe cycle
+        if event.type == "iteration_start":
+            iteration += 1
+            if iteration > max_iterations:  # host-enforced ceiling — Claude has no built-in limit
+                agent.stop(reason="max_iterations_exceeded")
+                break
+
+        # fired when a tool call throws an error
+        elif event.type == "tool_error":
+            consecutive_errors += 1
+            if consecutive_errors >= 3:  # give up after 3 failures in a row
+                agent.stop(reason="error_threshold_exceeded")
+                break
+        elif event.type == "tool_result":
+            consecutive_errors = 0  # successful tool call resets the error streak
+
+        # fired after each API call with updated token counts
+        elif event.type == "usage_update":
+            if event.usage.input_tokens > 150_000:  # stop before hitting the context limit
+                agent.stop(reason="token_budget_exceeded")
+                break
+
+    return agent.result()  # returns Claude's final text response
+```
+
+### Loop with Lifecycle Hooks
+
+Hooks let you observe and control the loop without modifying business logic:
+
+```python
+from anthropic.agents import Agent, AgentHooks
+
+# subclass AgentHooks and override only the lifecycle events you care about
+class AuditHooks(AgentHooks):
+
+    # called once at the beginning of each iteration, before Claude reasons
+    def on_iteration_start(self, iteration: int, context):
+        print(f"[Iteration {iteration}] Context tokens: {context.token_count}")
+
+    # called every time Claude emits a tool call, before the host executes it
+    def on_tool_call(self, tool_name: str, tool_input: dict):
+        print(f"[Tool] {tool_name}({tool_input})")
+
+    # called after the host runs the tool and gets a result back
+    def on_tool_result(self, tool_name: str, result: str, error: bool):
+        if error:
+            print(f"[Tool Error] {tool_name}: {result}")
+
+    # called when the loop exits for any reason (goal complete, max iterations, etc.)
+    def on_stop(self, reason: str, iterations: int):
+        print(f"[Stop] reason={reason} after {iterations} iterations")
+
+# pass the hooks instance to Agent — the SDK calls them automatically
+agent = Agent(
+    client=client,
+    model="claude-opus-4-5",
+    system="...",
+    tools=[search_database],
+    hooks=AuditHooks(),  # hooks run alongside the loop without touching business logic
+)
+```
+
+<Callout variant="info" title="Hooks are the right place for cross-cutting concerns">
+Use hooks for logging, rate limiting, cost tracking, and audit trails. Don't put these in tool implementations — they belong at the loop level.
+</Callout>
+
+---
+
+## Agentic Loop vs. Single Turn
+
+| | Single Turn | Agentic Loop |
+|---|---|---|
+| **Rounds** | 1 | N (until stop condition) |
+| **Tool use** | Optional | Core mechanic |
+| **Context growth** | Fixed | Grows each iteration |
+| **Cost** | Predictable | Variable — budget required |
+| **Use case** | Q&A, generation | Tasks requiring action + observation |
+
+<AntiPatternCard
+  title="No stop conditions beyond 'Claude decides'"
+  wrong={
+    <>
+      <p>Relying only on Claude emitting a final response to terminate the loop:</p>
+      <pre><code>{`# DANGEROUS: no host-side limit
+while True:
+    response = client.messages.create(...)
+    if not response.tool_calls:
+        break  # Only exits if Claude stops calling tools`}</code></pre>
+      <p>If a tool always returns data Claude finds interesting, the loop never exits.</p>
+    </>
+  }
+  right={
+    <>
+      <p>Always enforce at least a max_iterations ceiling on the host side:</p>
+      <pre><code>{`MAX_ITERATIONS = 15
+for i in range(MAX_ITERATIONS):
+    response = client.messages.create(...)
+    if not response.tool_calls:
+        break
+    # process tool calls...
+else:
+    raise AgentTimeoutError(f"Agent exceeded {MAX_ITERATIONS} iterations")`}</code></pre>
+    </>
+  }
+  explanation="The exam tests this pattern directly. The correct answer always includes host-enforced stop conditions, not just relying on the model's judgment."
+/>
+
+---
+
+## Token Budget Planning
+
+Each iteration adds to the context. Plan for it:
+
+```python
+def estimate_loop_cost(
+    system_tokens: int,
+    avg_tool_result_tokens: int,
+    avg_response_tokens: int,
+    max_iterations: int,
+) -> dict:
+    """Estimate total tokens for a loop of N iterations."""
+    context_growth_per_iter = avg_tool_result_tokens + avg_response_tokens
+    max_context = system_tokens + (context_growth_per_iter * max_iterations)
+    return {
+        "max_context_tokens": max_context,
+        "fits_in_200k_window": max_context < 200_000,
+        "estimated_input_tokens": max_context * 0.6,  # rough average
+    }
+```
+
+<ExamTip>
+Context grows **cumulatively** in agentic loops — every tool result and response stays in the window. A loop with 20 iterations and 500-token tool results adds 10,000+ tokens. The exam tests whether you account for this in system design questions.
+</ExamTip>
+
+<KeyTakeaway>
+- The agentic loop is: Reason → Act → Observe → repeat until stop condition
+- **Stop conditions must be enforced by the host** — Claude has no built-in iteration limit
+- Always implement: max_iterations, error threshold, and token budget guards
+- Lifecycle hooks are the correct place for logging, rate limiting, and audit trails — not tool implementations
+- Context grows cumulatively each iteration — budget for this in system design
+</KeyTakeaway>

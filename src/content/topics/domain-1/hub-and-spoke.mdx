@@ -1,0 +1,312 @@
+---
+title: "Hub-and-Spoke Orchestration"
+description: "Coordinator-subagent architecture, isolated context, and explicit information passing between agents."
+estimatedMinutes: 25
+domain: 1
+---
+
+**Hub-and-spoke** is the dominant multi-agent pattern in Claude-based systems. A **coordinator** (the hub) decomposes a goal and delegates subtasks to **subagents** (the spokes). The coordinator aggregates results and produces the final output.
+
+<MermaidDiagram chart={`flowchart TD
+    User(["👤 User Request"]) --> Coord
+
+    subgraph Hub ["🎯 Coordinator Agent"]
+        Coord["Decompose task\nPlan subtasks\nAggregate results"]
+    end
+
+    subgraph Spokes ["Subagents — Isolated Context Windows"]
+        A["🔍 Research Agent\nContext: task_spec + tools\nReturns: research_report"]
+        B["✍️ Writer Agent\nContext: task_spec + research_report\nReturns: draft"]
+        C["✅ Reviewer Agent\nContext: task_spec + draft\nReturns: feedback"]
+    end
+
+    Coord -->|"task_spec (explicit)"| A
+    A -->|"research_report (explicit)"| Coord
+    Coord -->|"task_spec + research_report (explicit)"| B
+    B -->|"draft (explicit)"| Coord
+    Coord -->|"task_spec + draft (explicit)"| C
+    C -->|"feedback (explicit)"| Coord
+    Coord --> Result(["📄 Final Output"])
+
+    style Hub fill:#1e1f52,stroke:#6470f3,color:#e6edf3
+    style Spokes fill:#0f172a,stroke:#334155,color:#e6edf3
+    style User fill:#1e3a5f,stroke:#3b82f6,color:#e6edf3
+    style Result fill:#14532d,stroke:#22c55e,color:#e6edf3`}
+  title="Hub-and-Spoke: Coordinator delegates to isolated subagents"
+/>
+
+---
+
+## The Critical Rule: Isolated Context
+
+This is the most exam-tested concept in Domain 1:
+
+> **Each subagent has its own isolated context window. Subagents do NOT share memory, state, or context with each other or with the coordinator — unless information is passed explicitly.**
+
+When the coordinator spawns a subagent, that subagent starts with:
+- Its own system prompt
+- Only the messages you explicitly pass to it
+- No knowledge of what other subagents have done
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+
+def run_subagent(task_spec: str, context_data: dict) -> str:
+    """
+    Subagent receives ONLY what coordinator explicitly passes.
+    It has no access to coordinator's conversation history.
+    """
+    # Build the subagent's context explicitly
+    user_message = f"""
+    Task: {task_spec}
+
+    Context provided by coordinator:
+    {context_data}
+
+    Complete the task and return your result.
+    """
+
+    response = client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=2048,
+        system="You are a specialized research assistant. Complete the assigned task thoroughly.",
+        messages=[{"role": "user", "content": user_message}],
+    )
+    return response.content[0].text
+
+
+def coordinator_agent(user_goal: str) -> str:
+    """Coordinator decomposes, delegates, aggregates — explicitly passing all needed context."""
+
+    # Step 1: Plan
+    plan_response = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=1024,
+        system="You are a coordinator. Break the user's goal into 2-3 parallel research tasks.",
+        messages=[{"role": "user", "content": user_goal}],
+    )
+    plan = plan_response.content[0].text
+
+    # Step 2: Delegate to subagents — pass context EXPLICITLY
+    research_result = run_subagent(
+        task_spec="Research the market landscape",
+        context_data={"goal": user_goal, "focus": "competitors and trends"},
+    )
+
+    analysis_result = run_subagent(
+        task_spec="Analyze technical feasibility",
+        context_data={"goal": user_goal, "market_data": research_result},
+        # ↑ coordinator explicitly passes research_result to second subagent
+    )
+
+    # Step 3: Aggregate
+    final = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=2048,
+        system="Synthesize the research and analysis into a final report.",
+        messages=[{
+            "role": "user",
+            "content": f"Goal: {user_goal}\n\nResearch: {research_result}\n\nAnalysis: {analysis_result}"
+        }],
+    )
+    return final.content[0].text
+```
+
+<ExamTip>
+The exam heavily tests isolated context. A question might show a coordinator that "assumes subagent B can see what subagent A did." That's the wrong answer. The coordinator must **explicitly extract** the result from subagent A and **explicitly inject** it into subagent B's message.
+</ExamTip>
+
+### What breaks when you forget explicit passing
+
+Scenario: coordinator asks a research agent to find competitor pricing, then asks a writer agent to "summarise the findings" — without passing the research results.
+
+```python
+# BROKEN: writer subagent has no idea what the research agent found
+research_result = run_subagent(
+    task_spec="Find competitor pricing for cloud storage",
+    context_data={"goal": user_goal},
+)
+
+writer_result = run_subagent(
+    task_spec="Summarise the findings from the research agent",
+    context_data={},   # ← research_result was never passed here
+)
+# Writer has zero context. It will hallucinate or say "no findings provided."
+
+# FIXED: pass the result explicitly
+writer_result = run_subagent(
+    task_spec="Summarise these competitor pricing findings",
+    context_data={"research": research_result},  # ← explicit injection
+)
+```
+
+The writer subagent's context window starts empty each time — it cannot reach back into the research agent's session or the coordinator's history.
+
+---
+
+## Parallel vs. Sequential Subagents
+
+The coordinator decides whether subagents run in sequence or parallel based on **data dependencies**.
+
+```python
+import asyncio
+
+async def run_subagent_async(task_spec: str, context: dict) -> str:
+    """Async version for parallel execution."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, run_subagent, task_spec, context)
+
+
+async def parallel_coordinator(goal: str) -> str:
+    """When subtasks have no dependencies, run in parallel."""
+
+    # These two tasks don't depend on each other — run in parallel
+    research_task = run_subagent_async(
+        "Research market trends",
+        {"goal": goal}
+    )
+    competitor_task = run_subagent_async(
+        "Identify key competitors",
+        {"goal": goal}
+    )
+
+    # Wait for both
+    research, competitors = await asyncio.gather(research_task, competitor_task)
+
+    # This task DEPENDS on the above — run after
+    synthesis = run_subagent(
+        "Synthesize into strategy",
+        {"goal": goal, "research": research, "competitors": competitors},
+    )
+    return synthesis
+```
+
+| Pattern | When to use | Example |
+|---|---|---|
+| **Sequential** | Task B needs Task A's output | Write → Review → Revise |
+| **Parallel** | Tasks are independent | Research A + Research B simultaneously |
+| **Fan-out/fan-in** | Many parallel → one aggregator | 5 research agents → 1 synthesis agent |
+| **Pipeline** | Linear chain of transforms | Extract → Validate → Enrich → Store |
+
+---
+
+## Coordinator Responsibilities
+
+The coordinator is responsible for three things:
+
+1. **Decomposition** — Breaking the goal into well-scoped subtasks
+2. **Context packaging** — Explicitly assembling each subagent's input
+3. **Aggregation** — Combining results into the final output
+
+```python
+class CoordinatorAgent:
+    def __init__(self, client: anthropic.Anthropic):
+        self.client = client
+        self.results: dict[str, str] = {}
+
+    def decompose(self, goal: str) -> list[dict]:
+        """Ask Claude to produce a structured task list."""
+        response = self.client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=512,
+            system="""Return a JSON array of tasks. Each task has:
+            - id: string
+            - description: string
+            - depends_on: list of task ids (empty if none)
+            """,
+            messages=[{"role": "user", "content": f"Decompose: {goal}"}],
+        )
+        import json
+        return json.loads(response.content[0].text)
+
+    def execute_task(self, task: dict) -> str:
+        """Execute one task, injecting results from dependencies."""
+        # Build context from completed dependency results
+        dep_context = {
+            dep_id: self.results[dep_id]
+            for dep_id in task.get("depends_on", [])
+            if dep_id in self.results
+        }
+
+        result = run_subagent(
+            task_spec=task["description"],
+            context_data=dep_context,
+        )
+        self.results[task["id"]] = result
+        return result
+```
+
+<AntiPatternCard
+  title="Assuming subagents share state"
+  wrong={
+    <>
+      <p>Coordinator launches subagents expecting them to "see" each other's work:</p>
+      <pre><code>{`# WRONG: Subagent B cannot see what Subagent A did
+subagent_a_result = run_subagent("research competitors", {})
+
+# Subagent B has NO access to subagent_a_result unless we pass it!
+subagent_b_result = run_subagent(
+    "write competitive analysis",
+    {}  # Empty context — B will hallucinate the research
+)`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Coordinator explicitly extracts and injects all needed context:</p>
+      <pre><code>{`subagent_a_result = run_subagent("research competitors", {})
+
+# Coordinator explicitly passes A's result to B
+subagent_b_result = run_subagent(
+    "write competitive analysis",
+    {"competitor_research": subagent_a_result}  # ✅ Explicit
+)`}</code></pre>
+    </>
+  }
+  explanation="This is the #1 hub-and-spoke mistake on the exam. Each agent call is a fresh API call with its own context — there is no shared memory between agents."
+/>
+
+---
+
+## Subagent Design Principles
+
+| Principle | Rationale |
+|---|---|
+| **Single responsibility** | Each subagent does one thing well — easier to debug and retry |
+| **Idempotent where possible** | Safe to retry a failed subagent without side effects |
+| **Return structured output** | Coordinator can reliably parse and pass results downstream |
+| **Minimal tool access** | Give each subagent only the tools it needs (principle of least privilege) |
+| **Stateless** | Don't carry state between invocations — coordinator owns state |
+
+```python
+# Subagent with structured return
+def research_subagent(topic: str, sources: list[str]) -> dict:
+    response = client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=1024,
+        system="""You are a research assistant.
+        Return your findings as JSON:
+        {"summary": str, "key_points": [str], "confidence": "high"|"medium"|"low"}""",
+        messages=[{
+            "role": "user",
+            "content": f"Research {topic} using these sources: {sources}"
+        }],
+    )
+    import json
+    return json.loads(response.content[0].text)
+```
+
+<ExamTip>
+When the exam asks about model selection in multi-agent systems: use a **powerful model (Opus) for the coordinator** (complex reasoning, decomposition, aggregation) and **faster/cheaper models (Haiku) for subagents** doing well-scoped tasks. This is the standard pattern.
+</ExamTip>
+
+<KeyTakeaway>
+- Hub-and-spoke: one coordinator delegates to isolated subagents, aggregates results
+- **Subagents have ISOLATED context — they see only what the coordinator explicitly passes**
+- Parallel execution requires no data dependency between tasks; sequential requires it
+- Coordinators own: decomposition, context packaging, aggregation, and state
+- Use Opus for the coordinator (complex reasoning), Haiku for subagents (focused tasks)
+- Each subagent should be single-responsibility, stateless, and return structured output
+</KeyTakeaway>

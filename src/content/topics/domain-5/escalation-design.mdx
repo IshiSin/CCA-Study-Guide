@@ -1,0 +1,319 @@
+---
+title: "Escalation Design"
+description: "Designing escalation triggers — when agents should stop and surface decisions to humans, escalation paths, and avoiding both under- and over-escalation."
+estimatedMinutes: 20
+domain: 5
+---
+
+**Escalation** is the decision to stop autonomous execution and hand a situation to a human (or a higher-authority system). Well-designed escalation is what separates a trustworthy agent from one that either does too much unsupervised or annoys users by asking permission for everything.
+
+## The Escalation Decision
+
+Every escalation trigger answers one question: **is this decision within the agent's sanctioned authority?**
+
+Agents have implicit or explicit authority bounds. When a situation falls outside those bounds — because of irreversibility, ambiguity, risk, or explicit policy — the correct action is to escalate rather than proceed.
+
+```
+Decision at each action:
+
+Is this within my sanctioned authority?
+  ├─ YES → Proceed autonomously
+  └─ NO → Escalate
+
+What makes something outside authority?
+  ├─ Irreversible at scale (can't be undone, or undo is expensive)
+  ├─ Ambiguous intent (multiple valid interpretations, outcome differs significantly)
+  ├─ High blast radius (affects many users, systems, or data)
+  ├─ Novel situation (no established pattern, first time seen)
+  └─ Explicit policy trigger (hardcoded: "always ask before deleting user data")
+```
+
+<ExamTip>
+The exam tests the distinction between escalation as a **safety mechanism** vs. escalation as a **failure mode**. Good escalation surfaces the right decisions at the right time. Bad escalation either never escalates (agent acts unilaterally on things it shouldn't) or always escalates (agent is useless without constant human input). The goal is calibrated escalation: autonomous for routine, escalated for exceptional.
+</ExamTip>
+
+---
+
+## Escalation Triggers
+
+### Trigger Category 1: Irreversibility Threshold
+
+The agent estimates whether an action can be undone. Above a certain irreversibility level, always escalate:
+
+```python
+from enum import IntEnum
+
+class Reversibility(IntEnum):
+    FULLY_REVERSIBLE = 1      # Read, preview, dry-run
+    EASILY_REVERSIBLE = 2     # Create (can delete), local edit (can revert)
+    RECOVERABLE = 3           # Production edit with backup, git commit (can revert)
+    DIFFICULT_TO_REVERSE = 4  # Sent email, published post, deployed change
+    IRREVERSIBLE = 5          # Deleted data, sent payment, notified user
+
+ESCALATION_THRESHOLD = Reversibility.DIFFICULT_TO_REVERSE
+
+def should_escalate_for_reversibility(action: dict) -> bool:
+    reversibility = classify_reversibility(action)
+    return reversibility >= ESCALATION_THRESHOLD
+
+def classify_reversibility(action: dict) -> Reversibility:
+    action_type = action.get("type")
+    match action_type:
+        case "read_file" | "list_files" | "search":
+            return Reversibility.FULLY_REVERSIBLE
+        case "create_file" | "write_file":
+            return Reversibility.EASILY_REVERSIBLE
+        case "edit_file" | "git_commit":
+            return Reversibility.RECOVERABLE
+        case "send_email" | "post_message" | "git_push":
+            return Reversibility.DIFFICULT_TO_REVERSE
+        case "delete_record" | "charge_payment" | "drop_table":
+            return Reversibility.IRREVERSIBLE
+        case _:
+            return Reversibility.DIFFICULT_TO_REVERSE  # Unknown → treat as risky
+```
+
+### Trigger Category 2: Ambiguity Detection
+
+When the agent detects that the user's intent could be interpreted in multiple materially different ways:
+
+```python
+def detect_ambiguity(task: str, interpretations: list[str]) -> bool:
+    """
+    Escalate if multiple interpretations exist and they lead to different outcomes.
+    """
+    if len(interpretations) <= 1:
+        return False
+
+    # Check if interpretations diverge significantly
+    # (In practice, ask Claude to assess divergence)
+    diverges_significantly = assess_outcome_divergence(interpretations)
+    return diverges_significantly
+
+# Examples:
+# "Clean up old users" → delete vs. archive vs. flag? AMBIGUOUS → escalate
+# "Add a search feature" → which endpoint? what fields? AMBIGUOUS → escalate
+# "Fix the bug in login.py" → single file, clear intent → NOT ambiguous → proceed
+```
+
+### Trigger Category 3: Blast Radius Threshold
+
+Escalate when an action affects more than N units (users, records, systems):
+
+```python
+BLAST_RADIUS_THRESHOLDS = {
+    "users_affected": 100,          # Escalate if >100 users impacted
+    "records_modified": 1000,       # Escalate if >1000 DB rows changed
+    "services_affected": 3,         # Escalate if >3 services touched
+    "estimated_cost_usd": 50.0,     # Escalate if estimated cost exceeds $50
+}
+
+def check_blast_radius(action_plan: dict) -> tuple[bool, str]:
+    """Returns (should_escalate, reason)."""
+    for metric, threshold in BLAST_RADIUS_THRESHOLDS.items():
+        actual = action_plan.get(metric, 0)
+        if actual > threshold:
+            return True, f"{metric}: {actual} exceeds threshold {threshold}"
+    return False, ""
+```
+
+### Trigger Category 4: Explicit Policy Triggers
+
+Hard rules that always require escalation, regardless of other factors:
+
+```python
+# These are non-negotiable — always escalate
+ALWAYS_ESCALATE = {
+    "actions": {
+        "delete_user_account",
+        "send_bulk_email",
+        "modify_billing_record",
+        "grant_admin_permissions",
+        "access_pii_fields",
+        "deploy_to_production",
+    },
+    "data_classifications": {
+        "pii",
+        "financial",
+        "health",
+        "credentials",
+    },
+    "environments": {
+        "production",
+        "prod-db",
+    }
+}
+
+def check_policy_triggers(action: dict) -> bool:
+    return (
+        action.get("action_type") in ALWAYS_ESCALATE["actions"]
+        or action.get("data_classification") in ALWAYS_ESCALATE["data_classifications"]
+        or action.get("environment") in ALWAYS_ESCALATE["environments"]
+    )
+```
+
+---
+
+## Escalation Paths
+
+When the agent decides to escalate, it needs to know **who** to escalate to and **how**:
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+
+EscalationSeverity = Literal["low", "medium", "high", "critical"]
+
+@dataclass
+class EscalationRequest:
+    trigger: str                    # What triggered the escalation
+    decision_required: str          # Exact question the human must answer
+    context: str                    # What the agent knows so far
+    options: list[str]              # Possible choices (if applicable)
+    severity: EscalationSeverity
+    reversible_until: str | None    # Deadline (if time-sensitive)
+    partial_result: str | None      # Work completed so far (don't lose it)
+
+    def format_for_human(self) -> str:
+        lines = [
+            f"## Escalation Required ({self.severity.upper()})",
+            f"**Trigger:** {self.trigger}",
+            f"**Question:** {self.decision_required}",
+            "",
+            f"**Context:**\n{self.context}",
+        ]
+        if self.options:
+            lines.append("\n**Options:**")
+            for i, opt in enumerate(self.options, 1):
+                lines.append(f"  {i}. {opt}")
+        if self.reversible_until:
+            lines.append(f"\n**Time-sensitive:** Decision needed by {self.reversible_until}")
+        if self.partial_result:
+            lines.append(f"\n**Work completed so far:**\n{self.partial_result}")
+        return "\n".join(lines)
+
+
+def escalate(request: EscalationRequest) -> str:
+    """Route escalation to the appropriate channel."""
+    if request.severity == "critical":
+        notify_pagerduty(request)
+        notify_slack(channel="#incidents", message=request.format_for_human())
+    elif request.severity == "high":
+        notify_slack(channel="#agent-escalations", message=request.format_for_human())
+    else:
+        # Log and wait — human reviews async
+        log_escalation(request)
+
+    # Pause execution until resolved
+    return wait_for_resolution(request)
+```
+
+---
+
+## Escalation Message Design
+
+A good escalation message surfaces **the decision**, not just the problem. The human should be able to act immediately:
+
+```python
+# BAD escalation message:
+"I encountered an issue and need your help."
+
+# GOOD escalation message:
+"""
+## Escalation: Action Requires Approval
+
+**What I was doing:** Migrating user data from legacy_users to users table
+
+**What I need from you:** Should I proceed with deleting the legacy_users table?
+This will permanently remove 2.3M rows. A backup was created at 14:32 UTC.
+
+**Options:**
+1. Yes — delete the legacy_users table (migration complete)
+2. No — keep legacy_users table as backup for 30 days, then delete
+3. No — keep legacy_users table permanently (investigate before deciding)
+
+**Work completed:** 2,314,882 of 2,314,882 records migrated successfully.
+All foreign key constraints updated. No errors.
+
+**Time sensitivity:** Not urgent — legacy table is not blocking anything.
+"""
+```
+
+---
+
+## Avoiding Over-Escalation
+
+Agents that escalate too frequently become useless. Prevent over-escalation:
+
+```python
+AUTONOMOUS_ACTIONS = {
+    # These never need escalation — agents have standing authority
+    "read_file", "search_code", "run_tests", "check_lint",
+    "create_branch", "write_local_file", "run_build",
+    "fetch_documentation", "count_tokens",
+}
+
+def needs_escalation(action: dict) -> bool:
+    # Standing authority — always safe
+    if action["type"] in AUTONOMOUS_ACTIONS:
+        return False
+
+    # Check escalation triggers in order of cheapness to compute
+    if check_policy_triggers(action):
+        return True
+    if should_escalate_for_reversibility(action):
+        return True
+    blast_radius_exceeded, _ = check_blast_radius(action)
+    if blast_radius_exceeded:
+        return True
+
+    return False
+```
+
+<AntiPatternCard
+  title="Binary escalation: all-or-nothing"
+  wrong={
+    <>
+      <p>Designing an agent that either never escalates or escalates for everything:</p>
+      <pre><code>{`# Pattern A: Never escalates (dangerous)
+def should_escalate(action):
+    return False  # "The agent is autonomous, it handles everything"
+
+# Pattern B: Escalates for everything (useless)
+def should_escalate(action):
+    return True  # "Better safe than sorry"
+
+# Both are failures: A creates uncontrolled blast radius risk,
+# B creates alert fatigue and defeats the purpose of automation`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Calibrated escalation: autonomous for low-risk, escalated for exceptional:</p>
+      <pre><code>{`def should_escalate(action):
+    # Standing authority: always safe
+    if action["type"] in AUTONOMOUS_ACTIONS:
+        return False
+    # Hard policy: always escalate
+    if check_policy_triggers(action):
+        return True
+    # Threshold-based: escalate above limits
+    return (
+        should_escalate_for_reversibility(action)
+        or check_blast_radius(action)[0]
+    )
+# Routine tasks run without interruption
+# Exceptional cases surface clearly with full context`}</code></pre>
+    </>
+  }
+  explanation="Calibrated escalation requires explicit authority bounds. Define what the agent can do autonomously, define what always requires escalation, and use thresholds for the space in between."
+/>
+
+<KeyTakeaway>
+- Escalate when: irreversibility exceeds threshold, intent is ambiguous, blast radius is too large, or policy triggers fire
+- Four trigger categories: irreversibility, ambiguity, blast radius, explicit policy
+- Escalation messages must surface the decision — give the human a clear question and options, not just "something went wrong"
+- Include: trigger reason, decision required, options, work completed, time sensitivity
+- Avoid over-escalation by defining standing authority for routine operations
+- Route escalations by severity: critical → immediate (PagerDuty/Slack), low → async queue
+</KeyTakeaway>

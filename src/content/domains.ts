@@ -1,0 +1,117 @@
+import type { Domain } from '@/lib/types'
+
+export const domains: Domain[] = [
+  {
+    id: 1,
+    slug: 'domain-1',
+    name: 'Agentic Architecture & Orchestration',
+    weight: 27,
+    description: 'Design multi-agent systems, orchestration patterns, task decomposition, session state management, and failure recovery strategies.',
+    color: 'blue',
+    topics: [
+      { slug: 'agentic-loops', title: 'Agentic Loops', estimatedMinutes: 20 },
+      { slug: 'hub-and-spoke', title: 'Hub-and-Spoke Orchestration', estimatedMinutes: 25 },
+      { slug: 'task-decomposition', title: 'Task Decomposition', estimatedMinutes: 20 },
+      { slug: 'agent-sdk', title: 'Claude Agent SDK', estimatedMinutes: 30 },
+      { slug: 'session-state', title: 'Session & State Management', estimatedMinutes: 20 },
+      { slug: 'failure-recovery', title: 'Failure Recovery', estimatedMinutes: 20 },
+      { slug: 'anti-patterns', title: 'Anti-Patterns', estimatedMinutes: 15 },
+    ],
+  },
+  {
+    id: 2,
+    slug: 'domain-2',
+    name: 'Tool Design & MCP Integration',
+    weight: 18,
+    description: 'Build and configure MCP servers and clients, design effective tool descriptions, handle structured errors, and scope tools appropriately.',
+    color: 'purple',
+    topics: [
+      { slug: 'mcp-fundamentals', title: 'MCP Fundamentals', estimatedMinutes: 25 },
+      { slug: 'tool-descriptions', title: 'Tool Descriptions', estimatedMinutes: 20 },
+      { slug: 'mcp-servers', title: 'MCP Servers', estimatedMinutes: 30 },
+      { slug: 'mcp-clients', title: 'MCP Clients', estimatedMinutes: 20 },
+      { slug: 'tool-scoping', title: 'Tool Scoping', estimatedMinutes: 15 },
+      { slug: 'structured-errors', title: 'Structured Errors', estimatedMinutes: 15 },
+    ],
+  },
+  {
+    id: 3,
+    slug: 'domain-3',
+    name: 'Claude Code Configuration & Workflows',
+    weight: 20,
+    description: 'Configure Claude Code with CLAUDE.md hierarchy, slash commands, agent skills, plan mode, and CI/CD integration.',
+    color: 'green',
+    topics: [
+      { slug: 'claude-md-hierarchy', title: 'CLAUDE.md Hierarchy', estimatedMinutes: 20 },
+      { slug: 'slash-commands', title: 'Slash Commands', estimatedMinutes: 15 },
+      { slug: 'agent-skills', title: 'Agent Skills', estimatedMinutes: 20 },
+      { slug: 'plan-mode', title: 'Plan Mode', estimatedMinutes: 15 },
+      { slug: 'ci-cd-integration', title: 'CI/CD Integration', estimatedMinutes: 20 },
+      { slug: 'mcp-config', title: 'MCP Configuration', estimatedMinutes: 20 },
+    ],
+  },
+  {
+    id: 4,
+    slug: 'domain-4',
+    name: 'Prompt Engineering & Structured Output',
+    weight: 20,
+    description: 'Master system prompts, few-shot examples, structured output validation, retry logic, batch API, and prompt caching.',
+    color: 'orange',
+    topics: [
+      { slug: 'system-prompts', title: 'System Prompts', estimatedMinutes: 20 },
+      { slug: 'few-shot-prompting', title: 'Few-Shot Prompting', estimatedMinutes: 20 },
+      { slug: 'structured-output', title: 'Structured Output', estimatedMinutes: 25 },
+      { slug: 'validation-retry', title: 'Validation & Retry', estimatedMinutes: 20 },
+      { slug: 'batch-api', title: 'Batch API', estimatedMinutes: 15 },
+      { slug: 'prompt-caching', title: 'Prompt Caching', estimatedMinutes: 20 },
+    ],
+  },
+  {
+    id: 5,
+    slug: 'domain-5',
+    name: 'Context Management & Reliability',
+    weight: 15,
+    description: 'Understand context window limits, context degradation, escalation design, human-in-the-loop patterns, and error propagation.',
+    color: 'red',
+    topics: [
+      { slug: 'context-window', title: 'Context Window', estimatedMinutes: 20 },
+      { slug: 'context-degradation', title: 'Context Degradation', estimatedMinutes: 15 },
+      { slug: 'escalation-design', title: 'Escalation Design', estimatedMinutes: 20 },
+      { slug: 'human-in-the-loop', title: 'Human-in-the-Loop', estimatedMinutes: 20 },
+      { slug: 'error-propagation', title: 'Error Propagation', estimatedMinutes: 15 },
+    ],
+  },
+]
+
+export const domainColorMap: Record<string, { bg: string; text: string; border: string; badge: string }> = {
+  blue: {
+    bg: 'bg-blue-500/10',
+    text: 'text-blue-400',
+    border: 'border-blue-500/30',
+    badge: 'bg-blue-500/20 text-blue-300',
+  },
+  purple: {
+    bg: 'bg-purple-500/10',
+    text: 'text-purple-400',
+    border: 'border-purple-500/30',
+    badge: 'bg-purple-500/20 text-purple-300',
+  },
+  green: {
+    bg: 'bg-emerald-500/10',
+    text: 'text-emerald-400',
+    border: 'border-emerald-500/30',
+    badge: 'bg-emerald-500/20 text-emerald-300',
+  },
+  orange: {
+    bg: 'bg-orange-500/10',
+    text: 'text-orange-400',
+    border: 'border-orange-500/30',
+    badge: 'bg-orange-500/20 text-orange-300',
+  },
+  red: {
+    bg: 'bg-red-500/10',
+    text: 'text-red-400',
+    border: 'border-red-500/30',
+    badge: 'bg-red-500/20 text-red-300',
+  },
+}

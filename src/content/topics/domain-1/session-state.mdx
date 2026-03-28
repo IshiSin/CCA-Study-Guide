@@ -1,0 +1,290 @@
+---
+title: "Session & State Management"
+description: "Managing state across agent turns, context forking for parallel execution, and patterns for persistent agent sessions."
+estimatedMinutes: 20
+domain: 1
+---
+
+Agents are inherently stateful — they reason over a growing conversation history. Managing this state correctly is critical for multi-turn reliability, parallel execution, and cost control.
+
+## State Lives in the Message History
+
+Claude has no built-in memory. **All state is the message array you pass on each turn.** To maintain state across turns, you own the conversation history.
+
+```python
+import anthropic
+from dataclasses import dataclass, field
+
+client = anthropic.Anthropic()
+
+@dataclass
+class AgentSession:
+    """Manages conversation state for a single agent session."""
+    session_id: str
+    system: str
+    messages: list[dict] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+
+    def add_user_message(self, content: str):
+        self.messages.append({"role": "user", "content": content})
+
+    def add_assistant_message(self, content):
+        self.messages.append({"role": "assistant", "content": content})
+
+    def add_tool_result(self, tool_use_id: str, result: str):
+        self.messages.append({
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": result,
+            }]
+        })
+
+    def token_estimate(self) -> int:
+        """Rough estimate: 4 chars ≈ 1 token."""
+        total_chars = sum(
+            len(str(m.get("content", ""))) for m in self.messages
+        )
+        return total_chars // 4
+
+def run_turn(session: AgentSession, user_input: str) -> str:
+    """Execute one turn in the session, updating state in place."""
+    session.add_user_message(user_input)
+
+    while True:
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=2048,
+            system=session.system,
+            messages=session.messages,
+            tools=[],
+        )
+
+        session.add_assistant_message(response.content)
+
+        if response.stop_reason == "end_turn":
+            # Extract text and return
+            return next(
+                block.text for block in response.content
+                if hasattr(block, "text")
+            )
+
+        # Handle tool calls
+        tool_results = []
+        for block in response.content:
+            if block.type == "tool_use":
+                result = execute_tool(block.name, block.input)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+        session.messages.append({"role": "user", "content": tool_results})
+```
+
+---
+
+## Context Forking for Parallel Execution
+
+When running subtasks in parallel, each subtask needs its own context fork — a snapshot of the coordinator's state at the point of delegation.
+
+```python
+import copy
+import asyncio
+
+def fork_context(session: AgentSession) -> AgentSession:
+    """
+    Create an isolated copy of the session for a parallel subtask.
+    The fork gets the full history up to this point, but changes
+    to the fork do NOT affect the parent session.
+    """
+    return AgentSession(
+        session_id=f"{session.session_id}-fork-{id(session)}",
+        system=session.system,
+        messages=copy.deepcopy(session.messages),  # Deep copy — isolation!
+        metadata=copy.copy(session.metadata),
+    )
+
+async def parallel_with_forks(coordinator_session: AgentSession, tasks: list[str]) -> list[str]:
+    """Run parallel subtasks, each with its own context fork."""
+
+    async def run_subtask(task: str) -> str:
+        # Each subtask gets an independent fork of the coordinator context
+        fork = fork_context(coordinator_session)
+        fork.add_user_message(f"Subtask: {task}")
+
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=1024,
+            system=fork.system,
+            messages=fork.messages,
+        )
+        return response.content[0].text
+
+    # Run all subtasks concurrently with isolated contexts
+    results = await asyncio.gather(*[run_subtask(t) for t in tasks])
+    return list(results)
+```
+
+<ExamTip>
+The exam tests **context forking** vs. **shared context**. When spawning parallel agents, you must fork — not share — the context. Sharing a mutable message list between concurrent agents causes race conditions and corrupted state.
+</ExamTip>
+
+---
+
+## State Passing Patterns
+
+Three patterns for how state moves through an agent system:
+
+### Pattern 1 — Return-Value Passing (Recommended)
+
+Agents return structured results; the caller owns state.
+
+```python
+# Clean: each function is pure — it takes input, returns output, owns no state
+def research_agent(query: str, context: dict) -> dict:
+    result = run_agent_task(query, context)
+    return {"findings": result, "sources": []}
+
+def coordinator(goal: str) -> str:
+    research = research_agent(goal, {})
+    analysis = analyze_agent(goal, {"research": research})
+    return synthesize(goal, {"research": research, "analysis": analysis})
+```
+
+### Pattern 2 — Context Object Passing
+
+A shared context object is explicitly passed down the call chain.
+
+```python
+@dataclass
+class PipelineContext:
+    goal: str
+    intermediate_results: dict = field(default_factory=dict)
+    errors: list = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+
+def run_pipeline(goal: str) -> str:
+    ctx = PipelineContext(goal=goal)
+
+    ctx.intermediate_results["research"] = research_step(ctx)
+    ctx.intermediate_results["analysis"] = analysis_step(ctx)
+
+    return synthesis_step(ctx)
+```
+
+### Pattern 3 — External State Store (for long-running agents)
+
+For agents that run for minutes/hours, persist state externally.
+
+```python
+import json
+import redis
+
+class PersistentSession:
+    def __init__(self, session_id: str, redis_client: redis.Redis):
+        self.session_id = session_id
+        self.redis = redis_client
+        self.ttl = 86400  # 24 hours
+
+    def save(self, session: AgentSession):
+        data = {
+            "messages": session.messages,
+            "metadata": session.metadata,
+        }
+        self.redis.setex(
+            f"agent:session:{self.session_id}",
+            self.ttl,
+            json.dumps(data)
+        )
+
+    def load(self) -> AgentSession | None:
+        data = self.redis.get(f"agent:session:{self.session_id}")
+        if not data:
+            return None
+        parsed = json.loads(data)
+        return AgentSession(
+            session_id=self.session_id,
+            system="...",
+            messages=parsed["messages"],
+            metadata=parsed["metadata"],
+        )
+```
+
+---
+
+## Managing Context Window Growth
+
+Without pruning, long-running sessions exhaust the context window.
+
+```python
+MAX_CONTEXT_TOKENS = 150_000  # Leave buffer from 200k limit
+
+def prune_session(session: AgentSession) -> AgentSession:
+    """
+    When context grows too large, summarize older messages.
+    Always preserve: system prompt + most recent N messages.
+    """
+    if session.token_estimate() < MAX_CONTEXT_TOKENS:
+        return session
+
+    # Keep the last 10 messages (most recent context)
+    recent_messages = session.messages[-10:]
+
+    # Summarize everything before that
+    older_messages = session.messages[:-10]
+    summary_text = summarize_messages(older_messages)
+
+    # Rebuild session with summary + recent
+    pruned = AgentSession(
+        session_id=session.session_id,
+        system=session.system,
+        messages=[
+            {"role": "user", "content": f"[Previous session summary]: {summary_text}"},
+            {"role": "assistant", "content": "Understood. Continuing from the summary."},
+            *recent_messages,
+        ],
+    )
+    return pruned
+```
+
+<Callout variant="warning" title="Summarization loses information">
+Pruning via summarization is a trade-off — you gain context space but lose detail. For tasks requiring precise recall of earlier content (e.g., code that was written 50 turns ago), summarization may cause the agent to make mistakes. Design systems to either (a) keep critical information explicitly or (b) re-fetch it from external storage when needed.
+</Callout>
+
+<AntiPatternCard
+  title="Sharing mutable message list between parallel agents"
+  wrong={
+    <>
+      <p>Passing the same messages list to multiple concurrent agents:</p>
+      <pre><code>{`messages = build_context(goal)
+
+# RACE CONDITION: both agents mutate the same list
+task_a = asyncio.create_task(agent_a(messages))  # modifies messages
+task_b = asyncio.create_task(agent_b(messages))  # also modifies messages
+# Result: corrupted, interleaved conversation history`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Deep copy context before passing to each parallel agent:</p>
+      <pre><code>{`import copy
+base_context = build_context(goal)
+
+# Each agent gets its own isolated copy
+task_a = asyncio.create_task(agent_a(copy.deepcopy(base_context)))
+task_b = asyncio.create_task(agent_b(copy.deepcopy(base_context)))
+# ✅ Isolated — mutations don't interfere`}</code></pre>
+    </>
+  }
+  explanation="This is a context isolation violation — the same pattern as shared state between subagents, just at the implementation level."
+/>
+
+<KeyTakeaway>
+- All agent state lives in the message array you manage — Claude has no built-in memory
+- Context forking (deep copy) is required before parallel agent execution — never share mutable state
+- Three state-passing patterns: return-value (pure functions), context object (explicit pass-through), external store (long-running)
+- Monitor token growth in long sessions; prune by summarizing older messages when approaching the context limit
+- Pruning trades detail for context space — keep critical information explicit or in external storage
+</KeyTakeaway>

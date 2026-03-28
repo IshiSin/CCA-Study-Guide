@@ -1,0 +1,313 @@
+---
+title: "Prompt Caching"
+description: "How prompt caching works — cache breakpoints, what gets cached, TTL, cost savings, and what content to put in cached vs. dynamic portions."
+estimatedMinutes: 20
+domain: 4
+---
+
+**Prompt caching** is an Anthropic API feature that lets you mark portions of your prompt for reuse across requests. When the same cached prefix is seen again, Claude doesn't reprocess those tokens — it reads from cache. This reduces both cost and latency for workloads with large, stable context.
+
+## How Caching Works
+
+Normally, every API request processes all input tokens from scratch. With caching, you mark a breakpoint after stable content. Tokens before the breakpoint are cached; tokens after it are processed fresh each request:
+
+```
+Without caching:
+Request 1: [system prompt 2,000 tokens] + [user message 50 tokens] → process 2,050 tokens
+Request 2: [system prompt 2,000 tokens] + [user message 50 tokens] → process 2,050 tokens
+Request 3: [system prompt 2,000 tokens] + [user message 50 tokens] → process 2,050 tokens
+
+With caching (system prompt cached after first request):
+Request 1: [system prompt 2,000 tokens] + [user message 50 tokens] → process 2,050 tokens (cache MISS, populate cache)
+Request 2: [CACHED 2,000 tokens] + [user message 50 tokens] → process 50 tokens (cache HIT)
+Request 3: [CACHED 2,000 tokens] + [user message 50 tokens] → process 50 tokens (cache HIT)
+```
+
+The cache hit reduces input token cost by ~90% for the cached portion.
+
+---
+
+## Cache Breakpoints
+
+Mark a cache breakpoint with `"cache_control": {"type": "ephemeral"}` on the content block you want cached up to:
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+
+response = client.messages.create(
+    model="claude-opus-4-6",
+    max_tokens=1024,
+    system=[
+        {
+            "type": "text",
+            "text": """You are a legal document analyst for LexiCorp.
+You help attorneys review contracts, identify risk clauses, and summarize obligations.
+
+## Analysis Framework
+Always structure analysis as:
+1. Parties and effective date
+2. Key obligations (each party)
+3. Termination conditions
+4. Unusual or risky clauses
+5. Recommended changes
+
+## Risk Classification
+- CRITICAL: clauses that expose the client to unlimited liability or waive key rights
+- HIGH: non-standard terms, unusual indemnification, IP ownership ambiguity
+- MEDIUM: missing standard clauses, unclear definitions
+- LOW: stylistic or formatting issues
+
+[... 2000 more tokens of stable system context ...]""",
+            "cache_control": {"type": "ephemeral"}  # Cache everything up to here
+        }
+    ],
+    messages=[
+        {
+            "role": "user",
+            "content": "Analyze this contract: [specific contract text here]"
+            # This changes per request — NOT cached
+        }
+    ]
+)
+```
+
+<ExamTip>
+`cache_control` goes on the **last content block** of what you want cached. Everything up to and including that block is cached. Content after it (subsequent blocks, user messages) is processed fresh. The exam may show a multi-block system prompt and ask which block to mark.
+</ExamTip>
+
+---
+
+## Cache TTL and Invalidation
+
+| Property | Value |
+|---|---|
+| Cache TTL | 5 minutes (refreshed on each hit) |
+| Cache scope | Per API key, per model |
+| Invalidation | Automatic on TTL expiry or when the cached prefix changes |
+| Min tokens for caching | 1,024 tokens (shorter content is not cached) |
+
+The 5-minute TTL refreshes on each cache hit. For applications with continuous traffic, the cache stays warm indefinitely. For bursty or low-frequency traffic, cache misses will occur between sessions.
+
+```python
+# Cache cost model:
+# Cache write (first request): ~25% surcharge on cached tokens
+# Cache read (subsequent requests): ~90% discount on cached tokens
+# Break-even: approximately 2 requests (the write + 1 read)
+# At 100 requests: massive savings on the cached portion
+```
+
+---
+
+## What to Cache
+
+Cache content that is:
+- **Large** — the cost savings are proportional to token count
+- **Stable** — content that changes per request cannot be cached (it causes a cache miss)
+- **Reused** — cached content must be identical across requests
+
+| Cache this | Don't cache this |
+|---|---|
+| System prompt | Per-user instructions |
+| Reference documentation | Dynamic user data |
+| Tool definitions | The user's query |
+| Few-shot examples | Conversation history |
+| Large context documents | Per-request metadata |
+
+---
+
+## Caching Large Documents
+
+A common use case is including a large reference document in the prompt for every request:
+
+```python
+# Load once at startup
+with open("terms_of_service.txt") as f:
+    tos_content = f.read()  # 50,000 tokens
+
+def answer_tos_question(question: str) -> str:
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=1024,
+        system="You are a Terms of Service assistant. Answer questions based only on the provided ToS.",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Terms of Service document:\n\n{tos_content}",
+                        "cache_control": {"type": "ephemeral"}  # Cache the large document
+                    },
+                    {
+                        "type": "text",
+                        "text": f"Question: {question}"  # Dynamic — NOT cached
+                    }
+                ]
+            }
+        ]
+    )
+    return response.content[0].text
+```
+
+With a 50,000-token document and 100 requests per day:
+- Without caching: 100 × 50,000 = 5,000,000 input tokens billed at full price
+- With caching: 1 cache write + 99 cache reads → ~90% cost reduction on the document portion
+
+---
+
+## Multiple Cache Breakpoints
+
+You can have up to 4 cache breakpoints per request. This is useful for multi-section system prompts where some sections are more stable than others:
+
+```python
+response = client.messages.create(
+    model="claude-opus-4-6",
+    max_tokens=1024,
+    system=[
+        {
+            "type": "text",
+            "text": "Core role and behavior (never changes)...",
+            "cache_control": {"type": "ephemeral"}  # Breakpoint 1 — always cached
+        },
+        {
+            "type": "text",
+            "text": f"Current product catalog: {product_catalog}",
+            # Breakpoint 2 — cached, refreshed when catalog updates
+            "cache_control": {"type": "ephemeral"}
+        }
+    ],
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"User account context: {user_tier} member since {join_date}",
+                    # NOT cached — different per user
+                },
+                {
+                    "type": "text",
+                    "text": user_question
+                }
+            ]
+        }
+    ]
+)
+```
+
+---
+
+## Cache and Multi-Turn Conversations
+
+For multi-turn conversations, cache the growing conversation history to avoid reprocessing it on each turn:
+
+```python
+def chat_with_caching(conversation_history: list, new_message: str) -> str:
+    # Mark the last message in history as cached
+    messages_with_cache = []
+
+    for i, msg in enumerate(conversation_history):
+        if i == len(conversation_history) - 1 and len(conversation_history) > 2:
+            # Cache the conversation history up to the last message
+            content = msg["content"]
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+            messages_with_cache.append({"role": msg["role"], "content": content})
+        else:
+            messages_with_cache.append(msg)
+
+    # Add the new user message (not cached)
+    messages_with_cache.append({"role": "user", "content": new_message})
+
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=2048,
+        system=cached_system_prompt,
+        messages=messages_with_cache
+    )
+
+    return response.content[0].text
+```
+
+<Callout variant="info" title="Cache usage is visible in usage stats">
+The API response includes `usage.cache_creation_input_tokens` and `usage.cache_read_input_tokens` alongside the standard `input_tokens`. Monitor these to verify caching is working and measure savings. If `cache_read_input_tokens` is always 0, your cache breakpoints aren't hitting — check that the cached prefix is identical across requests.
+</Callout>
+
+---
+
+## Why Static System Prompts Matter for Caching
+
+Any change to the cached prefix — even a single character — causes a cache miss. This is why dynamic content must stay out of cached sections:
+
+```python
+# BREAKS caching — user ID changes every request, so the "cached" section
+# is never actually the same twice
+system = [
+    {
+        "type": "text",
+        "text": f"""You are an assistant.
+User ID: {user_id}        # <-- this varies per user
+Account tier: {tier}      # <-- this varies per user""",
+        "cache_control": {"type": "ephemeral"}
+    }
+]
+
+# CORRECT — cached section is identical for all users
+system = [
+    {
+        "type": "text",
+        "text": "You are an assistant for our platform. Account context will be provided in the user message.",
+        "cache_control": {"type": "ephemeral"}
+    }
+]
+# User-specific context goes in the user message, outside the cache
+```
+
+<AntiPatternCard
+  title="Including dynamic content in the cached prefix"
+  wrong={
+    <>
+      <p>Cache breakpoint placed after user-specific content:</p>
+      <pre><code>{`system = [
+    {
+        "type": "text",
+        "text": f"You are a support agent.\\nCustomer: {customer_name}\\nPlan: {plan}\\nSince: {join_date}",
+        "cache_control": {"type": "ephemeral"}  # Changes every request = never cached
+    }
+]
+# cache_creation_input_tokens: non-zero every request
+# cache_read_input_tokens: always 0
+# Paying the cache write surcharge with zero benefit`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Cached section is static; dynamic content is outside it:</p>
+      <pre><code>{`system = [
+    {
+        "type": "text",
+        "text": "You are a support agent. Customer context will be in the user message.",
+        "cache_control": {"type": "ephemeral"}  # Same for every customer = cached
+    }
+]
+# Dynamic content in the user message, outside the cache:
+messages = [{
+    "role": "user",
+    "content": f"Customer: {customer_name}, Plan: {plan}\\n\\nQuestion: {question}"
+}]`}</code></pre>
+    </>
+  }
+  explanation="The cache key is the exact bytes of the cached prefix. Any variation — a different customer name, a timestamp — produces a different key and a cache miss. Dynamic content must live outside the cache boundary."
+/>
+
+<KeyTakeaway>
+- Add `"cache_control": {"type": "ephemeral"}` to the last content block of stable content to mark a cache breakpoint
+- Cache TTL is 5 minutes, refreshed on each hit — continuous traffic keeps the cache warm
+- Minimum 1,024 tokens to be eligible for caching; shorter content is never cached
+- Cache write costs ~25% extra; cache reads cost ~90% less — break-even at ~2 requests
+- Up to 4 cache breakpoints per request — cache the most stable, largest content first
+- Dynamic content (user data, per-request context) must stay outside cached sections — any change causes a cache miss
+- Monitor `usage.cache_read_input_tokens` to verify caching is working
+</KeyTakeaway>

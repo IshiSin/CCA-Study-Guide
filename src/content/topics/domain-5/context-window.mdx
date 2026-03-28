@@ -1,0 +1,258 @@
+---
+title: "Context Window"
+description: "How the context window works, what counts toward token limits, how Claude Code manages context in long sessions, and strategies for staying within bounds."
+estimatedMinutes: 20
+domain: 5
+---
+
+The **context window** is the total amount of text — measured in tokens — that a model can see at once. Everything that influences a Claude response must fit: the system prompt, conversation history, tool results, file contents, and the response itself. When context fills up, you cannot simply add more — something must be removed or summarized.
+
+## What Goes Into the Context Window
+
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Context Window Composition</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-red-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/3">Component</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/3">Token Cost</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/3">Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground">System prompt</td>
+        <td className="px-4 py-3 text-muted-foreground">Fixed per session</td>
+        <td className="px-4 py-3 text-muted-foreground">CLAUDE.md content included here</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground">Conversation history</td>
+        <td className="px-4 py-3 text-muted-foreground">Grows with each turn</td>
+        <td className="px-4 py-3 text-muted-foreground">Every user message + assistant reply</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground">Tool results</td>
+        <td className="px-4 py-3 text-muted-foreground">Often very large</td>
+        <td className="px-4 py-3 text-muted-foreground">File reads, bash output, search results</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground">Model response</td>
+        <td className="px-4 py-3 text-muted-foreground">Counts as output tokens</td>
+        <td className="px-4 py-3 text-muted-foreground">Billed separately; also consumed on next turn</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground">Injected files / context</td>
+        <td className="px-4 py-3 text-muted-foreground">Can be enormous</td>
+        <td className="px-4 py-3 text-muted-foreground">PDFs, large codebases, docs dumps</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Token Limits by Model
+
+| Model | Context Window | Notes |
+|---|---|---|
+| Claude Opus 4.6 | 200,000 tokens | ~150,000 words |
+| Claude Sonnet 4.6 | 200,000 tokens | Same window, faster |
+| Claude Haiku 4.5 | 200,000 tokens | Same window, cheapest |
+
+200K tokens sounds large, but tool-heavy agentic sessions consume it quickly. A single large file read can consume tens of thousands of tokens.
+
+<ExamTip>
+The exam tests that you know the context window is **shared** between input and output — it is not "200K input + separate output." The `max_tokens` parameter controls how much of the window Claude can use for its response. If you set `max_tokens=4096` with a 195K-token prompt, only 4K tokens remain for the response.
+</ExamTip>
+
+---
+
+## Token Counting
+
+Tokens are not characters or words — they are subword units from Claude's tokenizer. As a rough rule:
+
+- **1 token ≈ 4 characters of English prose**
+- **1 token ≈ ¾ of a word**
+- **Code tokenizes differently** — punctuation, identifiers, and whitespace each cost tokens
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+
+# Count tokens before sending — avoid surprise context overflows
+response = client.messages.count_tokens(
+    model="claude-opus-4-6",
+    system="You are a helpful assistant.",
+    messages=[
+        {"role": "user", "content": "Explain the context window."}
+    ]
+)
+
+print(f"Input tokens: {response.input_tokens}")
+# Use this to gate requests: if tokens > threshold, summarize first
+```
+
+---
+
+## How Claude Code Manages Context
+
+Claude Code tracks context usage and applies strategies automatically as sessions grow:
+
+### Auto-Compaction (`/compact`)
+
+When context nears the limit, Claude Code can summarize the conversation to free space:
+
+```
+User: /compact
+
+Claude: I'll summarize our conversation so far to free up context space.
+
+[Summary of what we've worked on, decisions made, current state of files]
+
+Context has been compacted. Continuing from the current state of the codebase.
+```
+
+The `/compact` command can also be invoked manually at any time. After compaction:
+- Prior conversation turns are replaced by a structured summary
+- File edits made during the session are preserved (they're on disk)
+- The model retains the work context without the full verbatim history
+
+### What Claude Code Prioritizes in Context
+
+When managing context, Claude Code keeps:
+1. **System prompt and CLAUDE.md** — always present
+2. **Recent turns** — the last N exchanges are kept verbatim
+3. **Summaries of older turns** — earlier history is compressed
+4. **Current file states** — re-read as needed rather than kept in context
+
+---
+
+## Context Budget Planning
+
+For long agentic tasks, budget context explicitly:
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+
+CONTEXT_LIMIT = 200_000
+RESPONSE_BUDGET = 8_000       # Reserve for Claude's response
+SAFETY_MARGIN = 10_000        # Don't fill to the brim
+USABLE_BUDGET = CONTEXT_LIMIT - RESPONSE_BUDGET - SAFETY_MARGIN  # 182,000
+
+def build_prompt_with_budget(files: list[str], task: str) -> list[dict]:
+    """Include as many files as fit within the context budget."""
+    messages = []
+    tokens_used = 0
+
+    for path in files:
+        with open(path) as f:
+            content = f.read()
+
+        file_message = {"role": "user", "content": f"File: {path}\n\n{content}"}
+
+        # Count tokens for this file
+        token_count = client.messages.count_tokens(
+            model="claude-opus-4-6",
+            messages=[file_message],
+        ).input_tokens
+
+        if tokens_used + token_count > USABLE_BUDGET:
+            # Would overflow — stop adding files
+            messages.append({
+                "role": "user",
+                "content": f"[Note: {len(files) - len(messages)} files omitted due to context limits]"
+            })
+            break
+
+        messages.append(file_message)
+        tokens_used += token_count
+
+    messages.append({"role": "user", "content": task})
+    return messages
+```
+
+---
+
+## Context Strategies for Large Codebases
+
+When the codebase is too large to fit in context:
+
+**1. Selective inclusion — only read what's relevant**
+```python
+# Instead of reading all files upfront, read as needed during the task
+# Let Claude decide what to read based on the task
+system = """When you need to understand a file, use the Read tool to fetch it.
+Don't try to hold the entire codebase in memory — explore lazily."""
+```
+
+**2. Summarize before including**
+```python
+def summarize_file_for_context(path: str) -> str:
+    """Get a compact summary instead of raw file content."""
+    with open(path) as f:
+        content = f.read()
+
+    # Ask Claude to summarize the file first
+    summary = client.messages.create(
+        model="claude-haiku-4-5",  # Use cheap model for summarization
+        max_tokens=500,
+        messages=[{
+            "role": "user",
+            "content": f"Summarize this file in 3-5 sentences focusing on: what it exports, its dependencies, and any important patterns.\n\n{content}"
+        }]
+    )
+    return f"[{path}]: {summary.content[0].text}"
+```
+
+**3. Use retrieval instead of injection**
+```python
+# Build a vector index of the codebase
+# Retrieve only the N most relevant chunks for each task
+# Avoids loading the entire codebase into context
+relevant_chunks = vector_store.search(query=task, top_k=10)
+context = "\n\n".join(chunk.content for chunk in relevant_chunks)
+```
+
+<AntiPatternCard
+  title="Injecting entire files regardless of relevance"
+  wrong={
+    <>
+      <p>Dumping all project files into context at the start of every session:</p>
+      <pre><code>{`# BAD: blindly include everything
+files = glob("**/*.py")
+context = ""
+for f in files:
+    context += open(f).read()
+
+# send context to Claude
+# Result: context overflow on medium-sized projects,
+# relevant signals buried in noise, slower and more expensive responses`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Include files lazily — only what the task actually requires:</p>
+      <pre><code>{`# GOOD: let Claude explore the codebase as needed
+system = """
+Read files using the Read tool when you need to understand them.
+Start with the entry point and follow imports.
+Don't read files speculatively — only read what you need.
+"""
+
+# Or: pre-filter to task-relevant files
+relevant = [f for f in all_files if task_keywords_in(f, task)]
+context = [read(f) for f in relevant[:10]]  # Cap at 10 files`}</code></pre>
+    </>
+  }
+  explanation="Injecting irrelevant files wastes context budget, buries important signals, and slows responses. Lazy loading (read on demand) or retrieval-based selection keeps context lean and focused."
+/>
+
+<KeyTakeaway>
+- Context window = system prompt + history + tool results + response — all share one 200K token budget
+- `max_tokens` reserves output space; the remainder is available for input
+- Use `client.messages.count_tokens()` to measure before sending to avoid overflows
+- `/compact` summarizes conversation history to free context space
+- For large tasks: read files lazily, summarize before including, or use retrieval-based selection
+- Plan a safety margin (10K+) so the model isn't reasoning at the edge of its limit
+</KeyTakeaway>

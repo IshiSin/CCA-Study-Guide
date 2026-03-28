@@ -1,0 +1,430 @@
+---
+title: "MCP Servers"
+description: "Building MCP servers with the Python and TypeScript SDKs — tool registration, resource handlers, error handling, and transport setup."
+estimatedMinutes: 30
+domain: 2
+---
+
+An **MCP server** is a process that exposes tools, resources, and/or prompts via the Model Context Protocol. Clients (like Claude Code or your agent) connect to it, discover its capabilities, and invoke them. You build MCP servers using the official SDKs — the protocol details are handled for you.
+
+## Python MCP Server: Basic Structure
+
+```python
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp import types
+import asyncio
+import json
+
+# Create the server instance
+app = Server("my-tool-server")
+
+# Register available tools
+@app.list_tools()
+async def list_tools() -> list[types.Tool]:
+    return [
+        types.Tool(
+            name="get_weather",
+            description=(
+                "Get current weather conditions for a city. "
+                "Use when the user asks about weather, temperature, or conditions. "
+                "Returns temperature, humidity, and a description of conditions."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "City name (e.g. 'London', 'New York', 'Tokyo')"
+                    },
+                    "unit": {
+                        "type": "string",
+                        "enum": ["celsius", "fahrenheit"],
+                        "description": "Temperature unit. Default: celsius",
+                        "default": "celsius"
+                    }
+                },
+                "required": ["city"]
+            }
+        ),
+    ]
+
+# Handle tool execution
+@app.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    if name == "get_weather":
+        city = arguments["city"]
+        unit = arguments.get("unit", "celsius")
+        # Real implementation would call a weather API
+        result = {"city": city, "temp": 18, "unit": unit, "conditions": "partly cloudy"}
+        return [types.TextContent(type="text", text=json.dumps(result))]
+
+    raise ValueError(f"Unknown tool: {name}")
+
+# Run the server over stdio transport
+async def main():
+    async with stdio_server() as streams:
+        await app.run(streams[0], streams[1], app.create_initialization_options())
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+<ExamTip>
+The exam tests that you know MCP servers are **separate processes** that communicate via transport — not in-process function calls. The server process starts independently; the client connects to it. This is why stdio transport is standard for local tools: the client spawns the server process and connects via its stdin/stdout.
+</ExamTip>
+
+---
+
+## Registering Resources
+
+Resources are read-only data sources Claude can pull into context:
+
+```python
+from mcp.server import Server
+from mcp import types
+import asyncio
+
+app = Server("docs-server")
+
+@app.list_resources()
+async def list_resources() -> list[types.Resource]:
+    return [
+        types.Resource(
+            uri="docs://api-reference",
+            name="API Reference",
+            description="Complete API reference documentation",
+            mimeType="text/markdown",
+        ),
+        types.Resource(
+            uri="docs://changelog",
+            name="Changelog",
+            description="Recent changes and version history",
+            mimeType="text/markdown",
+        ),
+    ]
+
+@app.read_resource()
+async def read_resource(uri: str) -> str:
+    if uri == "docs://api-reference":
+        # Read from file, database, or external service
+        with open("docs/api-reference.md") as f:
+            return f.read()
+    elif uri == "docs://changelog":
+        with open("docs/changelog.md") as f:
+            return f.read()
+    raise ValueError(f"Unknown resource: {uri}")
+```
+
+---
+
+## Error Handling in Tool Responses
+
+MCP has a precise error signaling contract. There are two distinct error modes:
+
+```python
+@app.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    if name == "query_database":
+        sql = arguments.get("sql", "")
+
+        # --- Protocol-level errors: use exceptions ---
+        # These indicate the tool call itself was malformed
+        if not sql.strip().upper().startswith("SELECT"):
+            raise ValueError("Only SELECT statements are allowed")
+
+        try:
+            result = await run_query(sql)
+            return [types.TextContent(
+                type="text",
+                text=json.dumps({"rows": result, "row_count": len(result)})
+            )]
+
+        except QueryTimeoutError:
+            # --- Content-level errors: use isError=True ---
+            # These are expected failure states the agent can reason about
+            return [types.TextContent(
+                type="text",
+                text=json.dumps({
+                    "error": "Query timed out after 30s",
+                    "error_type": "timeout",
+                    "suggestion": "Add a WHERE clause to narrow the result set"
+                })
+            )]
+
+        except PermissionError as e:
+            return [types.TextContent(
+                type="text",
+                text=json.dumps({
+                    "error": str(e),
+                    "error_type": "permission_denied"
+                })
+            )]
+```
+
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">MCP Error Modes</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-purple-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-mono text-purple-400 font-semibold w-1/4">Error Mode</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/4">Mechanism</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/2">When to use</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-purple-400">Protocol error</td>
+        <td className="px-4 py-3 text-muted-foreground">Raise an exception</td>
+        <td className="px-4 py-3 text-muted-foreground">Malformed request, unknown tool, invalid arguments</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-purple-400">Content error</td>
+        <td className="px-4 py-3 text-muted-foreground">Return text with <span className="font-mono text-purple-400">isError=True</span></td>
+        <td className="px-4 py-3 text-muted-foreground">Expected failures: timeout, not found, permission, quota exceeded</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+---
+
+## TypeScript MCP Server
+
+The TypeScript SDK follows the same structure:
+
+```typescript
+import { Server } from "@modelcontextprotocol/sdk/server/index.js"
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js"
+
+const server = new Server(
+  { name: "github-tools", version: "1.0.0" },
+  { capabilities: { tools: {} } }
+)
+
+// Register tool list
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: [
+    {
+      name: "create_issue",
+      description:
+        "Create a GitHub issue in a repository. " +
+        "Use when the user wants to report a bug, request a feature, or track a task. " +
+        "Returns the issue number and URL.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          repo: {
+            type: "string",
+            description: 'Repository in "owner/repo" format (e.g. "anthropics/claude-code")',
+          },
+          title: { type: "string", description: "Issue title — be concise and descriptive" },
+          body: { type: "string", description: "Issue body in Markdown" },
+          labels: {
+            type: "array",
+            items: { type: "string" },
+            description: 'Optional labels (e.g. ["bug", "high-priority"])',
+          },
+        },
+        required: ["repo", "title", "body"],
+      },
+    },
+  ],
+}))
+
+// Handle tool calls
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params
+
+  if (name === "create_issue") {
+    const { repo, title, body, labels = [] } = args as {
+      repo: string
+      title: string
+      body: string
+      labels?: string[]
+    }
+
+    // Real implementation would call GitHub API
+    const issueNumber = 42
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            number: issueNumber,
+            url: `https://github.com/${repo}/issues/${issueNumber}`,
+            title,
+          }),
+        },
+      ],
+    }
+  }
+
+  throw new Error(`Unknown tool: ${name}`)
+})
+
+// Start the server
+const transport = new StdioServerTransport()
+await server.connect(transport)
+```
+
+---
+
+## Multi-Tool Server with Shared State
+
+Real servers often expose multiple tools that share resources like DB connections:
+
+```python
+from mcp.server import Server
+from mcp import types
+import asyncio
+import json
+import asyncpg
+
+app = Server("analytics-server")
+
+# Shared database connection pool — initialized at startup
+_pool: asyncpg.Pool | None = None
+
+async def get_pool() -> asyncpg.Pool:
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(dsn="postgresql://localhost/analytics")
+    return _pool
+
+@app.list_tools()
+async def list_tools() -> list[types.Tool]:
+    return [
+        types.Tool(
+            name="run_report",
+            description=(
+                "Run a named analytics report and return the results. "
+                "Use for pre-defined business reports: revenue, retention, funnel. "
+                "Faster than run_sql for common reports. "
+                "Available reports: 'monthly_revenue', 'user_retention_7d', 'signup_funnel'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "report_name": {
+                        "type": "string",
+                        "enum": ["monthly_revenue", "user_retention_7d", "signup_funnel"],
+                        "description": "Name of the pre-defined report to run"
+                    },
+                    "start_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
+                    "end_date": {"type": "string", "description": "End date YYYY-MM-DD"},
+                },
+                "required": ["report_name", "start_date", "end_date"]
+            }
+        ),
+        types.Tool(
+            name="run_sql",
+            description=(
+                "Execute a custom read-only SQL SELECT query. "
+                "Use for ad-hoc analysis not covered by run_report. "
+                "Only SELECT is permitted — mutations will be rejected."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sql": {"type": "string", "description": "A valid PostgreSQL SELECT statement"}
+                },
+                "required": ["sql"]
+            }
+        ),
+    ]
+
+@app.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    pool = await get_pool()
+
+    if name == "run_sql":
+        sql = arguments["sql"]
+        if not sql.strip().upper().startswith("SELECT"):
+            raise ValueError("Only SELECT statements are allowed")
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql)
+            return [types.TextContent(
+                type="text",
+                text=json.dumps([dict(r) for r in rows])
+            )]
+
+    raise ValueError(f"Unknown tool: {name}")
+```
+
+<Callout variant="info" title="Server initialization vs. handler registration">
+Initialize shared resources (DB pools, API clients, caches) during server startup — not inside each handler. Handlers are called per-request; startup code runs once. Using a module-level singleton with lazy initialization (like `get_pool()` above) is the standard pattern.
+</Callout>
+
+---
+
+## Server Lifecycle
+
+```python
+import signal
+import asyncio
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+
+app = Server("my-server")
+
+async def main():
+    # Setup: initialize any shared resources before accepting connections
+    await initialize_database()
+    await warm_cache()
+
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await app.run(
+                read_stream,
+                write_stream,
+                app.create_initialization_options()
+            )
+    finally:
+        # Teardown: clean up on any exit (including SIGTERM)
+        await close_database()
+```
+
+<AntiPatternCard
+  title="Blocking I/O inside async tool handlers"
+  wrong={
+    <>
+      <p>Using synchronous blocking calls in async handlers:</p>
+      <pre><code>{`@app.call_tool()
+async def call_tool(name: str, arguments: dict):
+    if name == "fetch_data":
+        import requests
+        # BLOCKS the event loop — all other requests stall
+        response = requests.get("https://api.example.com/data")
+        return [types.TextContent(type="text", text=response.text)]`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Use async HTTP clients to avoid blocking the event loop:</p>
+      <pre><code>{`import httpx
+
+@app.call_tool()
+async def call_tool(name: str, arguments: dict):
+    if name == "fetch_data":
+        async with httpx.AsyncClient() as client:
+            # Non-blocking — other requests can proceed while waiting
+            response = await client.get("https://api.example.com/data")
+            return [types.TextContent(type="text", text=response.text)]`}</code></pre>
+    </>
+  }
+  explanation="MCP servers handle concurrent requests asynchronously. Blocking I/O (requests, time.sleep, synchronous file reads) stalls the entire server. Use httpx, aiofiles, asyncpg, and other async libraries."
+/>
+
+<KeyTakeaway>
+- MCP servers are separate processes — they expose tools/resources over a transport (stdio, HTTP)
+- `list_tools` returns tool schemas; `call_tool` executes them — these are the two required handlers
+- Two error modes: raise exceptions for protocol/malformed errors; return content with error details for expected failures
+- Initialize shared resources (DB pools, API clients) at startup, not per-request
+- Use async I/O throughout — blocking calls in async handlers stall the server
+- TypeScript and Python SDKs follow the same handler registration pattern
+</KeyTakeaway>

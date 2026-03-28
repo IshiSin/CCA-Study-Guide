@@ -1,0 +1,390 @@
+---
+title: "Error Propagation"
+description: "How errors flow through multi-agent systems — containment boundaries, structured error contracts, coordinator recovery logic, and preventing cascading failures."
+estimatedMinutes: 15
+domain: 5
+---
+
+In a single-agent system, an error either fails the request or gets handled locally. In a **multi-agent system**, errors have a propagation path: they originate in a tool or subagent, travel through the coordinator, and eventually reach the user or an escalation handler. Designing that path explicitly — rather than letting errors bubble up as raw exceptions — is what separates brittle pipelines from resilient ones.
+
+## The Error Propagation Path
+
+```
+Tool / External API
+      │
+      │  Error originates here
+      ▼
+  Subagent
+      │  Catches, classifies, returns structured error
+      │  (Does NOT re-raise raw exceptions upward)
+      ▼
+  Coordinator
+      │  Receives structured error
+      │  Decides: retry / degrade / skip / escalate
+      ▼
+  Orchestrator (if present)
+      │  Aggregates partial failures
+      │  Decides overall task status
+      ▼
+  User / Escalation Handler
+      │  Receives: what failed, what succeeded, what to do next
+```
+
+Each layer in this path has a distinct responsibility. When layers fail to respect their boundaries — for example, a subagent letting a raw exception bubble to the coordinator — the coordinator loses the structured information it needs to make good recovery decisions.
+
+---
+
+## The Structured Error Contract
+
+Every tool and subagent must honor an error contract: return structured errors, never raw exceptions. The coordinator is the consumer of these errors and needs specific fields to act:
+
+```python
+from dataclasses import dataclass, field
+from typing import Any, Literal
+from enum import Enum
+
+class ErrorCode(str, Enum):
+    # Transient — worth retrying
+    RATE_LIMITED       = "RATE_LIMITED"
+    TIMEOUT            = "TIMEOUT"
+    NETWORK_ERROR      = "NETWORK_ERROR"
+    SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
+
+    # Permanent — don't retry
+    NOT_FOUND          = "NOT_FOUND"
+    PERMISSION_DENIED  = "PERMISSION_DENIED"
+    INVALID_INPUT      = "INVALID_INPUT"
+    QUOTA_EXCEEDED     = "QUOTA_EXCEEDED"
+
+    # Partial — may have usable data despite error
+    PARTIAL_SUCCESS    = "PARTIAL_SUCCESS"
+    TIMEOUT_WITH_DATA  = "TIMEOUT_WITH_DATA"
+
+@dataclass
+class AgentResult:
+    success: bool
+    data: Any = None
+
+    # Error fields (populated when success=False)
+    error_code: str | None = None
+    error_message: str | None = None
+    retryable: bool = False
+    partial_data: Any = None        # Usable data despite failure
+
+    # Provenance
+    source: str = ""                # Which subagent/tool produced this
+    attempt: int = 1                # Which retry attempt this was
+
+    def to_dict(self) -> dict:
+        return {
+            "success": self.success,
+            "data": self.data,
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "retryable": self.retryable,
+            "partial_data": self.partial_data,
+            "source": self.source,
+            "attempt": self.attempt,
+        }
+```
+
+---
+
+## Containment Boundaries
+
+A **containment boundary** is a layer that catches all exceptions from below, classifies them, and emits structured errors upward. Every subagent is a containment boundary:
+
+```python
+import json
+import asyncio
+from typing import Callable, Any
+
+def with_containment(
+    fn: Callable,
+    source: str,
+    *args,
+    **kwargs,
+) -> AgentResult:
+    """
+    Wraps any function in a containment boundary.
+    Catches all exceptions and converts to AgentResult.
+    Never raises — always returns.
+    """
+    try:
+        result = fn(*args, **kwargs)
+        return AgentResult(success=True, data=result, source=source)
+
+    except RateLimitError as e:
+        return AgentResult(
+            success=False,
+            error_code=ErrorCode.RATE_LIMITED,
+            error_message=str(e),
+            retryable=True,
+            source=source,
+        )
+    except TimeoutError as e:
+        # Check if we got partial data before timeout
+        partial = getattr(e, 'partial_data', None)
+        return AgentResult(
+            success=False,
+            error_code=ErrorCode.TIMEOUT_WITH_DATA if partial else ErrorCode.TIMEOUT,
+            error_message=f"Timed out after {kwargs.get('timeout', '?')}s",
+            retryable=True,
+            partial_data=partial,
+            source=source,
+        )
+    except PermissionError as e:
+        return AgentResult(
+            success=False,
+            error_code=ErrorCode.PERMISSION_DENIED,
+            error_message=str(e),
+            retryable=False,   # Retrying won't fix a permission error
+            source=source,
+        )
+    except Exception as e:
+        # Catch-all: unknown errors are retryable (maybe transient)
+        return AgentResult(
+            success=False,
+            error_code="UNKNOWN_ERROR",
+            error_message=f"{type(e).__name__}: {str(e)[:300]}",
+            retryable=True,
+            source=source,
+        )
+```
+
+---
+
+## Coordinator Recovery Logic
+
+The coordinator receives `AgentResult` objects and decides how to handle failures:
+
+```python
+from enum import Enum
+import time
+import random
+
+class RecoveryAction(Enum):
+    RETRY           = "retry"
+    USE_PARTIAL     = "use_partial"     # Use partial_data if available
+    SKIP            = "skip"            # Task was optional
+    ESCALATE        = "escalate"        # Surface to human
+    ABORT           = "abort"           # Stop entire workflow
+
+def coordinator_decide_recovery(
+    result: AgentResult,
+    task: dict,
+    attempt: int,
+    max_retries: int = 3,
+) -> RecoveryAction:
+    """Decide what to do with a failed subagent result."""
+    if attempt < max_retries and result.retryable:
+        return RecoveryAction.RETRY
+
+    if result.partial_data is not None and not task.get("requires_complete_data", False):
+        return RecoveryAction.USE_PARTIAL
+
+    if task.get("optional", False):
+        return RecoveryAction.SKIP
+
+    if task.get("critical", False):
+        return RecoveryAction.ESCALATE
+
+    return RecoveryAction.ABORT
+
+
+async def run_with_recovery(
+    task: dict,
+    subagent_fn: Callable,
+    max_retries: int = 3,
+) -> AgentResult:
+    """Run a subagent with full recovery logic."""
+    for attempt in range(1, max_retries + 1):
+        result = with_containment(subagent_fn, source=task["id"])
+        result.attempt = attempt
+
+        if result.success:
+            return result
+
+        action = coordinator_decide_recovery(result, task, attempt, max_retries)
+
+        if action == RecoveryAction.RETRY:
+            # Exponential backoff with jitter
+            delay = min(2 ** attempt + random.uniform(0, 1), 30)
+            await asyncio.sleep(delay)
+            continue
+
+        elif action == RecoveryAction.USE_PARTIAL:
+            return AgentResult(
+                success=True,
+                data=result.partial_data,
+                error_code=result.error_code,
+                error_message=f"[PARTIAL] {result.error_message}",
+                source=result.source,
+            )
+
+        elif action == RecoveryAction.SKIP:
+            return AgentResult(
+                success=True,
+                data=None,
+                error_message=f"[SKIPPED] {result.error_message}",
+                source=result.source,
+            )
+
+        elif action == RecoveryAction.ESCALATE:
+            raise EscalationRequired(
+                task=task["id"],
+                result=result,
+                message=f"Critical task '{task['id']}' failed: {result.error_message}"
+            )
+
+        else:  # ABORT
+            raise RuntimeError(
+                f"Task '{task['id']}' failed after {attempt} attempts: {result.error_message}"
+            )
+
+    # Exhausted retries
+    raise RuntimeError(f"Task '{task['id']}' exhausted {max_retries} retries")
+```
+
+---
+
+## Preventing Cascading Failures
+
+When one subagent fails, its failure can cascade to downstream tasks that depend on its output. Design dependency graphs to contain blast radius:
+
+```python
+async def run_dag_with_containment(tasks: list[dict]) -> dict:
+    """
+    Run a task DAG. Failures in one task don't automatically
+    cancel independent tasks — only dependent tasks are affected.
+    """
+    results: dict[str, AgentResult] = {}
+    failed: set[str] = set()
+
+    for task in topological_sort(tasks):
+        task_id = task["id"]
+        dependencies = task.get("depends_on", [])
+
+        # Check if any required dependency failed
+        failed_deps = [d for d in dependencies if d in failed]
+
+        if failed_deps and not task.get("optional", False):
+            # Skip this task — its inputs are unavailable
+            results[task_id] = AgentResult(
+                success=False,
+                error_code="DEPENDENCY_FAILED",
+                error_message=f"Skipped: dependency failed: {failed_deps}",
+                source=task_id,
+            )
+            failed.add(task_id)
+            continue
+
+        # Gather available inputs (may be partial if optional deps failed)
+        inputs = {
+            dep_id: results[dep_id].data
+            for dep_id in dependencies
+            if dep_id in results and results[dep_id].success
+        }
+
+        result = await run_with_recovery(task, lambda: run_task(task, inputs))
+        results[task_id] = result
+
+        if not result.success and task.get("critical", False):
+            failed.add(task_id)
+
+    return {
+        "results": results,
+        "failed_tasks": list(failed),
+        "complete": len(failed) == 0,
+    }
+```
+
+---
+
+## Error Aggregation and Reporting
+
+When multiple subagents fail, report them as a cohesive summary — not a flood of individual errors:
+
+```python
+def build_failure_report(results: dict[str, AgentResult]) -> str:
+    failures = [
+        (task_id, r) for task_id, r in results.items()
+        if not r.success
+    ]
+
+    if not failures:
+        return "All tasks completed successfully."
+
+    lines = [f"**{len(failures)} task(s) failed:**\n"]
+
+    # Group by error code
+    by_code: dict[str, list] = {}
+    for task_id, result in failures:
+        code = result.error_code or "UNKNOWN"
+        by_code.setdefault(code, []).append((task_id, result))
+
+    for code, items in by_code.items():
+        lines.append(f"**{code}** ({len(items)} tasks):")
+        for task_id, result in items:
+            lines.append(f"  - `{task_id}`: {result.error_message}")
+            if result.partial_data:
+                lines.append(f"    Partial data available: {str(result.partial_data)[:100]}")
+
+    # Summarize retryable vs. permanent
+    retryable = sum(1 for _, r in failures if r.retryable)
+    permanent = len(failures) - retryable
+    lines.append(f"\n{retryable} retryable, {permanent} permanent failures.")
+
+    return "\n".join(lines)
+```
+
+<AntiPatternCard
+  title="Letting raw exceptions propagate between agent layers"
+  wrong={
+    <>
+      <p>Subagent raises an exception that the coordinator receives as a raw Python error:</p>
+      <pre><code>{`# Subagent
+def research_topic(topic: str) -> str:
+    response = requests.get(f"https://api.example.com/search?q={topic}")
+    response.raise_for_status()  # Raises requests.HTTPError on failure
+    return response.json()
+
+# Coordinator
+try:
+    result = research_topic(topic)
+except Exception as e:
+    # Coordinator catches a generic exception — no structure
+    # Is it retryable? Unknown. Partial data? Unknown. Source? Unknown.
+    print(f"Error: {e}")
+    raise  # Can only re-raise or give up`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Subagent contains all exceptions and returns structured results:</p>
+      <pre><code>{`# Subagent — always returns AgentResult, never raises
+def research_topic(topic: str) -> AgentResult:
+    return with_containment(
+        lambda: requests.get(f"https://api.example.com/search?q={topic}").json(),
+        source="research_subagent",
+    )
+
+# Coordinator — receives full structure, can make informed decision
+result = research_topic(topic)
+if not result.success:
+    action = coordinator_decide_recovery(result, task, attempt)
+    # Has: error_code, retryable, partial_data, source
+    # Can make an informed retry/skip/escalate decision`}</code></pre>
+    </>
+  }
+  explanation="Raw exceptions carry no structured metadata. The coordinator cannot distinguish a rate limit (retry in 1s) from a permanent not-found (don't retry) from a partial timeout (use partial data). Containment boundaries at each agent layer are what enable intelligent recovery."
+/>
+
+<KeyTakeaway>
+- Every tool and subagent is a containment boundary: catch all exceptions, emit structured `AgentResult`, never propagate raw exceptions upward
+- `AgentResult` must include: `success`, `error_code`, `retryable`, `partial_data`, `source`
+- Coordinator recovery actions: Retry (transient), Use Partial (timeout with data), Skip (optional task), Escalate (critical failure), Abort
+- In DAGs, failure in one task should only cancel dependent tasks — not independent parallel tasks
+- Group and aggregate failures before reporting — a flood of individual errors is harder to act on than a structured summary
+- Retryable vs. permanent error classification drives recovery strategy; classify at the containment boundary, not at the coordinator
+</KeyTakeaway>

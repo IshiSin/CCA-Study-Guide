@@ -1,0 +1,239 @@
+---
+title: "Few-Shot Prompting"
+description: "When and how to use few-shot examples — example selection, ordering, format consistency, and using few-shot for structured output extraction."
+estimatedMinutes: 20
+domain: 4
+---
+
+**Few-shot prompting** means including worked examples — input/output pairs — in the prompt to show Claude the exact format, style, or reasoning pattern you expect. Zero-shot relies on instructions alone; few-shot shows rather than tells.
+
+## Zero-Shot vs. Few-Shot
+
+```python
+# Zero-shot: instruction only
+messages = [
+  {
+    "role": "user",
+    "content": "Classify the sentiment of this review as positive, negative, or neutral: 'The product works but the packaging was damaged.'"
+  }
+]
+
+# Few-shot: instruction + examples
+messages = [
+  {
+    "role": "user",
+    "content": """Classify the sentiment of each review as positive, negative, or neutral.
+
+Review: "Absolutely love this product, exceeded expectations!"
+Sentiment: positive
+
+Review: "Stopped working after two days. Very disappointed."
+Sentiment: negative
+
+Review: "It arrived on time and does what it says."
+Sentiment: neutral
+
+Review: "The product works but the packaging was damaged."
+Sentiment:"""
+  }
+]
+```
+
+The few-shot version eliminates ambiguity about the output format and gives Claude calibration examples for the "neutral" class — which is often the hardest to classify.
+
+<ExamTip>
+The exam tests *when* few-shot is worth the token cost. Use few-shot when: (1) format precision matters, (2) you have edge cases that instructions don't capture, or (3) you need consistent length/verbosity calibration. Zero-shot is sufficient for clear, well-defined tasks with no formatting requirements.
+</ExamTip>
+
+---
+
+## Where to Place Examples
+
+Examples belong in the **human turn**, not the system prompt. This is an important architectural distinction:
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+
+response = client.messages.create(
+    model="claude-opus-4-6",
+    max_tokens=256,
+    system="You are a sentiment classifier. Classify reviews as positive, negative, or neutral.",
+    messages=[
+        # Few-shot examples as alternating human/assistant turns
+        {"role": "user", "content": "Review: 'Absolutely love this!'"},
+        {"role": "assistant", "content": "positive"},
+        {"role": "user", "content": "Review: 'Broke after one day.'"},
+        {"role": "assistant", "content": "negative"},
+        {"role": "user", "content": "Review: 'Works as described.'"},
+        {"role": "assistant", "content": "neutral"},
+        # Actual request
+        {"role": "user", "content": "Review: 'The product works but packaging was damaged.'"},
+    ],
+)
+```
+
+Using alternating `user`/`assistant` turns as the example format is more reliable than embedding examples as text blocks, because it leverages Claude's understanding of conversation structure.
+
+---
+
+## Example Selection
+
+Not all examples are equal. Select examples that:
+
+### 1. Cover the edge cases, not the obvious cases
+
+```python
+# Weak examples — all clearly positive/negative
+{"role": "user", "content": "Review: 'Fantastic quality!'"},
+{"role": "assistant", "content": "positive"},
+{"role": "user", "content": "Review: 'Terrible, don't buy.'"},
+{"role": "assistant", "content": "negative"},
+
+# Strong examples — show the ambiguous cases
+{"role": "user", "content": "Review: 'Shipping was slow but product is great.'"},
+{"role": "assistant", "content": "positive"},  # Mixed, but net positive
+{"role": "user", "content": "Review: 'Five stars! Though the color was slightly off.'"},
+{"role": "assistant", "content": "positive"},  # Complaint doesn't override 5 stars
+```
+
+### 2. Match the distribution of real inputs
+
+If 80% of your real inputs are product questions and 20% are billing questions, weight your examples accordingly. Examples train expectations — if you only show product examples, Claude may handle billing questions inconsistently.
+
+### 3. Show consistent output format
+
+Every example must produce output in exactly the format you want. Any deviation in example outputs will cause deviation in real outputs:
+
+```python
+# Inconsistent — will produce inconsistent output
+{"role": "assistant", "content": "Positive"},   # Capitalized
+{"role": "assistant", "content": "negative."},  # Lowercase with period
+{"role": "assistant", "content": "NEUTRAL"},    # All caps
+
+# Consistent — produces consistent output
+{"role": "assistant", "content": "positive"},
+{"role": "assistant", "content": "negative"},
+{"role": "assistant", "content": "neutral"},
+```
+
+---
+
+## Few-Shot for Structured Output
+
+Few-shot examples are especially powerful for teaching Claude a JSON schema when you cannot use `tool_use` (see Structured Output):
+
+```python
+system = """Extract contract metadata and return valid JSON only.
+No text outside the JSON object."""
+
+messages = [
+    {
+        "role": "user",
+        "content": "Contract: 'This agreement between Acme Corp and Widget LLC, effective January 1 2025, for 12 months at $5,000/month...'"
+    },
+    {
+        "role": "assistant",
+        "content": '{"party_a": "Acme Corp", "party_b": "Widget LLC", "effective_date": "2025-01-01", "duration_months": 12, "monthly_value": 5000}'
+    },
+    {
+        "role": "user",
+        "content": "Contract: 'Service agreement between DataFlow Inc and LogiSoft, starting March 15 2025, annual contract worth $120,000...'"
+    },
+    {
+        "role": "assistant",
+        "content": '{"party_a": "DataFlow Inc", "party_b": "LogiSoft", "effective_date": "2025-03-15", "duration_months": 12, "monthly_value": 10000}'
+    },
+    {
+        "role": "user",
+        "content": f"Contract: '{actual_contract_text}'"
+    },
+]
+```
+
+This approach shows Claude both the schema and how to handle derived fields (like computing `monthly_value` from annual total).
+
+---
+
+## Few-Shot Chain-of-Thought
+
+For complex reasoning tasks, show the reasoning chain in your examples:
+
+```python
+messages = [
+    {
+        "role": "user",
+        "content": "A train leaves at 9:00 AM traveling at 60 mph. Another train leaves at 10:00 AM from the same station at 90 mph in the same direction. When does the second train catch the first?"
+    },
+    {
+        "role": "assistant",
+        "content": """Let me work through this step by step.
+
+At 10:00 AM (when train 2 departs):
+- Train 1 has been traveling for 1 hour at 60 mph
+- Train 1 is 60 miles ahead
+
+Train 2 gains on Train 1 at: 90 - 60 = 30 mph
+
+Time for Train 2 to close 60 miles at 30 mph:
+60 ÷ 30 = 2 hours
+
+Train 2 catches Train 1 at 10:00 AM + 2 hours = 12:00 PM"""
+    },
+    # ... actual question
+]
+```
+
+<Callout variant="info" title="Zero-shot chain-of-thought is often sufficient">
+For many reasoning tasks, you don't need few-shot examples — just add "Think step by step" or "Let's work through this carefully" to your prompt. Few-shot chain-of-thought is most useful when the reasoning style itself (not just the answer) needs to follow a specific format.
+</Callout>
+
+---
+
+## How Many Examples?
+
+| Task Type | Recommended Examples |
+|---|---|
+| Simple classification (2-3 classes) | 1–3 |
+| Complex classification (many classes) | 2–5 |
+| Structured extraction (consistent schema) | 2–4 |
+| Complex reasoning | 1–3 (quality over quantity) |
+| Style/tone calibration | 2–5 |
+
+More examples consume more tokens. Beyond 5–6 examples, returns diminish rapidly for most tasks. If you need more than 6 examples to get consistent output, the problem is usually the schema or instructions — not the number of examples.
+
+<AntiPatternCard
+  title="Using examples that don't match the target format"
+  wrong={
+    <>
+      <p>Examples with verbose outputs when you want terse responses:</p>
+      <pre><code>{`// Example shows multi-paragraph response
+{"role": "assistant", "content": "This review expresses a clearly positive sentiment. The customer is enthusiastic about the product and uses positive language like 'love' and 'exceeded expectations'. Overall: positive."}
+
+// But your instruction says: "Respond with one word only: positive, negative, or neutral"
+// Claude will follow the example format, not the instruction`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Examples match the exact output format you want:</p>
+      <pre><code>{`// Example matches the one-word format
+{"role": "assistant", "content": "positive"}
+
+// Instruction and examples are consistent
+// Claude will produce single-word outputs reliably`}</code></pre>
+    </>
+  }
+  explanation="When instructions and examples conflict, Claude follows the examples. Examples are demonstration — they override prose instructions. Make sure your examples produce output in exactly the format your downstream code expects."
+/>
+
+<KeyTakeaway>
+- Few-shot examples show format, style, and edge cases — zero-shot relies on instructions alone
+- Place examples as alternating user/assistant turns in the `messages` array, not in the system prompt
+- Select examples that cover edge cases and ambiguous inputs, not obvious ones
+- All examples must use identical output format — inconsistency in examples causes inconsistency in outputs
+- For complex reasoning, show the full reasoning chain (chain-of-thought) in examples
+- 2–5 examples is usually sufficient; beyond 6, returns diminish — fix schema instead of adding more examples
+- When instructions and examples conflict, Claude follows the examples
+</KeyTakeaway>

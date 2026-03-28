@@ -1,0 +1,294 @@
+---
+title: "CI/CD Integration"
+description: "Running Claude Code non-interactively with the -p flag, output formats, tool permissions, GitHub Actions integration, and headless automation patterns."
+estimatedMinutes: 20
+domain: 3
+---
+
+Claude Code is designed to run both interactively (in a terminal) and non-interactively in automated pipelines. The `-p` flag is the entry point for headless use: CI/CD systems, GitHub Actions, cron jobs, and any context where no human is present at the keyboard.
+
+## The `-p` Flag
+
+`-p` (short for `--print`) runs Claude Code with a single prompt and exits:
+
+```bash
+# Interactive mode (default) — stays open, awaits further input
+claude
+
+# Non-interactive mode — runs prompt, prints result, exits with code 0/1
+claude -p "Review the staged changes and list any bugs you find"
+```
+
+The output goes to stdout. Exit code is `0` on success, non-zero on failure.
+
+---
+
+## Output Formats
+
+Control how Claude's response is serialized with `--output-format`:
+
+| Format | Flag | Best for |
+|---|---|---|
+| Plain text | `--output-format text` (default) | Human-readable logs, simple scripts |
+| JSON | `--output-format json` | Downstream parsing, structured pipelines |
+| Streaming JSON | `--output-format stream-json` | Real-time output, progress monitoring |
+
+### JSON Output Structure
+
+```bash
+claude -p "List the files that would be affected by refactoring the auth module" \
+  --output-format json
+```
+
+```json
+{
+  "result": "The following files reference the auth module:\n- src/middleware/auth.ts\n- src/routes/api.ts\n...",
+  "cost_usd": 0.0023,
+  "duration_ms": 4200,
+  "turns": 3,
+  "session_id": "sess_abc123"
+}
+```
+
+### Streaming JSON Output
+
+```bash
+claude -p "Write tests for src/payments/processor.ts" \
+  --output-format stream-json
+```
+
+```json
+{"type": "content_block_start", "index": 0}
+{"type": "content_block_delta", "delta": {"text": "I'll write tests for"}}
+{"type": "content_block_delta", "delta": {"text": " the payments processor..."}}
+{"type": "tool_use", "name": "Read", "input": {"file_path": "src/payments/processor.ts"}}
+{"type": "tool_result", "content": "...file contents..."}
+{"type": "content_block_delta", "delta": {"text": "Here are the tests:\n\n```typescript"}}
+{"type": "result", "cost_usd": 0.0041, "turns": 2}
+```
+
+<ExamTip>
+The exam tests the three output formats and their use cases. The key distinction: `json` waits for the complete response then emits one JSON object; `stream-json` emits newline-delimited JSON events as they happen. Use `stream-json` when you need real-time feedback (logging to a UI, monitoring long tasks); use `json` when you need the complete structured result before proceeding.
+</ExamTip>
+
+---
+
+## Controlling Turns and Context
+
+```bash
+# Limit how many back-and-forth turns Claude takes
+claude -p "Fix the failing tests" --max-turns 5
+
+# Pipe in additional context via stdin
+git diff HEAD~1 | claude -p "Summarize these changes as a changelog entry"
+
+# Combine: pipe context + limit turns + JSON output
+cat error.log | claude -p "Identify the root cause of these errors" \
+  --max-turns 3 \
+  --output-format json
+```
+
+---
+
+## Tool Permissions in CI
+
+By default, Claude Code asks for confirmation before running tools with side effects. In CI, there is no user to confirm. Use `--allowedTools` to grant permissions upfront:
+
+```bash
+# Allow only read operations — safe for analysis tasks
+claude -p "Audit the codebase for hardcoded secrets" \
+  --allowedTools "Read,Glob,Grep"
+
+# Allow read + bash for running tests
+claude -p "Run the test suite and report which tests are flaky" \
+  --allowedTools "Read,Glob,Grep,Bash"
+
+# Allow file editing for automated fixes
+claude -p "Fix all ESLint errors in src/" \
+  --allowedTools "Read,Glob,Grep,Edit,Bash"
+```
+
+<Callout variant="info" title="Principle of least privilege in CI">
+Only grant the tools Claude needs for the specific task. A code review task needs Read/Grep/Glob — not Edit or Bash. An auto-fix task needs Edit — but probably not Bash (to prevent arbitrary command execution). Scope tool permissions to the task.
+</Callout>
+
+---
+
+## GitHub Actions Integration
+
+```yaml
+# .github/workflows/claude-review.yml
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # To post review comments
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # Full history for accurate diffs
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run Claude Review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          git diff origin/${{ github.base_ref }}...HEAD | \
+          claude -p "Review this PR diff for bugs, security issues, and missing tests.
+                     Format output as GitHub Markdown with headers per finding.
+                     Include file:line references for each issue." \
+            --allowedTools "Read,Glob,Grep" \
+            --output-format json \
+          | jq -r '.result' > review.md
+
+      - name: Post Review Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            const review = fs.readFileSync('review.md', 'utf8')
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## Claude Code Review\n\n${review}`
+            })
+```
+
+---
+
+## Environment Setup
+
+```bash
+# Required: API key for Claude access
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Optional: Override default model
+export ANTHROPIC_MODEL="claude-opus-4-6"
+
+# Optional: Set base URL for proxied API access
+export ANTHROPIC_BASE_URL="https://your-proxy.internal/anthropic"
+```
+
+In GitHub Actions, store the API key as a repository secret (`ANTHROPIC_API_KEY`) and reference it with `${{ secrets.ANTHROPIC_API_KEY }}`.
+
+---
+
+## Common CI Patterns
+
+### Automated Code Review on PR
+
+```bash
+claude -p "$(cat <<'EOF'
+Review the following diff for:
+1. Bugs and logic errors
+2. Security vulnerabilities
+3. Missing error handling
+4. Test coverage gaps
+
+Output each finding as JSON: {"file": "...", "line": N, "severity": "critical|major|minor", "description": "..."}
+EOF
+)" --allowedTools "Read,Glob,Grep" --output-format json < diff.patch
+```
+
+### Auto-fix Linting Errors
+
+```bash
+# Run linter, capture output, let Claude fix it
+npm run lint 2>&1 | claude -p "Fix all the ESLint errors listed above.
+  Do not change any logic — only fix linting violations." \
+  --allowedTools "Read,Edit,Glob" \
+  --max-turns 10
+```
+
+### Generate Release Notes
+
+```bash
+git log v1.2.0..HEAD --oneline | claude -p "Convert these git commits into
+  user-facing release notes. Group by: Features, Bug Fixes, Performance.
+  Use plain English, not technical jargon." \
+  --output-format text > RELEASE_NOTES.md
+```
+
+### Dependency Audit
+
+```bash
+npm audit --json | claude -p "Analyze these npm audit results.
+  For each vulnerability: assess real exploitability in a Node.js API server,
+  recommend whether to fix now or defer, and if fixing, provide the exact command." \
+  --allowedTools "Read" \
+  --output-format json
+```
+
+---
+
+## Exit Codes and Error Handling
+
+```bash
+# Check exit code for pipeline integration
+claude -p "Run the test suite and confirm all tests pass" \
+  --allowedTools "Bash" \
+  --output-format json
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -ne 0 ]; then
+  echo "Claude Code failed with exit code $EXIT_CODE"
+  exit 1
+fi
+```
+
+| Exit Code | Meaning |
+|---|---|
+| `0` | Success — task completed |
+| `1` | Error — task failed or Claude encountered an unrecoverable error |
+
+<AntiPatternCard
+  title="Using Claude Code in CI without scoping tool permissions"
+  wrong={
+    <>
+      <p>Running Claude in CI with full permissions for every task:</p>
+      <pre><code>{`# In GitHub Actions:
+claude -p "Review the PR diff for bugs"
+# No --allowedTools specified = Claude uses all tools by default
+# A code review task has no need to edit files or run commands
+# If Claude is confused or adversarially prompted, it could
+# run git push, delete files, or execute arbitrary bash commands`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Grant only the tools the task actually requires:</p>
+      <pre><code>{`# Code review — read only
+claude -p "Review the PR diff for bugs" \
+  --allowedTools "Read,Glob,Grep"
+
+# Auto-fix — editing allowed, bash limited
+claude -p "Fix ESLint errors" \
+  --allowedTools "Read,Edit,Glob,Grep"
+
+# Test runner — bash needed, editing not
+claude -p "Run tests and report failures" \
+  --allowedTools "Read,Glob,Grep,Bash"`}</code></pre>
+    </>
+  }
+  explanation="In CI, there is no human to reject unexpected tool calls. Scope --allowedTools to the minimum required for the task. This limits blast radius if Claude misinterprets the task or the system prompt is manipulated."
+/>
+
+<KeyTakeaway>
+- `-p "prompt"` runs Claude Code non-interactively — executes and exits, no keyboard input required
+- `--output-format json` for parsed downstream results; `stream-json` for real-time event streaming
+- `--allowedTools` grants specific tool permissions — always scope to the minimum needed
+- `--max-turns N` prevents runaway loops in automated contexts
+- `ANTHROPIC_API_KEY` environment variable is required for all non-interactive use
+- Pipe stdin for additional context: `cat diff.patch | claude -p "review this"`
+</KeyTakeaway>

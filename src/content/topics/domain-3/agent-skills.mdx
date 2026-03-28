@@ -1,0 +1,227 @@
+---
+title: "Agent Skills"
+description: "How Claude Code skills work — the difference between skills and slash commands, skill anatomy, trigger conditions, and building reusable skills."
+estimatedMinutes: 20
+domain: 3
+---
+
+**Agent skills** (also called **skills**) are an advanced form of slash command — structured prompt files that tell Claude Code not just what to do, but when to do it and how to present itself. Skills are used to build repeatable, shareable agent workflows that activate automatically under the right conditions.
+
+## Skills vs. Slash Commands
+
+| | Slash Commands | Skills |
+|---|---|---|
+| **Invocation** | Always manual (`/command-name`) | Manual OR automatic via trigger |
+| **File location** | `.claude/commands/` | `.claude/commands/` (same directory) |
+| **Structure** | Free-form Markdown prompt | Structured with metadata sections |
+| **Identity** | Claude stays as Claude | Can adopt a specialized persona/role |
+| **Discovery** | Listed in `/` menu | Listed in `/` menu + can auto-trigger |
+
+<ExamTip>
+The exam may test the terminology distinction: "slash commands" and "skills" both live in `.claude/commands/` as `.md` files. The difference is that skills include structured metadata — especially trigger conditions — that makes them smarter about when they activate. A skill is a slash command with extra structure.
+</ExamTip>
+
+---
+
+## Skill Anatomy
+
+A skill file uses a structured format with metadata blocks:
+
+```markdown
+<!-- .claude/commands/commit.md -->
+Generate a git commit message for the staged changes.
+
+Run `git diff --staged` to see what's staged, then write a commit message that:
+- Uses imperative mood ("Add feature" not "Added feature")
+- Summarizes the *why*, not just the *what*
+- Stays under 72 characters for the subject line
+- Adds a body paragraph if the change is non-trivial
+
+Then ask me to confirm before running `git commit -m "..."`.
+```
+
+More sophisticated skills include **trigger conditions** — descriptions of when Claude should automatically invoke the skill:
+
+```markdown
+<!-- .claude/commands/review-pr.md -->
+Use this skill when the user asks to review a pull request, review their changes,
+or check their diff before committing. Also trigger when the user says
+"LGTM?", "does this look good?", or "is this ready to merge?".
+
+Perform a code review of the current staged changes or the diff specified.
+
+Review for:
+1. Logic correctness and edge cases
+2. Security vulnerabilities (injection, auth, secrets)
+3. Performance issues (N+1 queries, unnecessary re-renders)
+4. Test coverage gaps
+
+Format: Summary → Issues (Critical/Major/Minor) → Suggestions
+```
+
+---
+
+## Writing Effective Skill Triggers
+
+The trigger description is natural language — Claude reads it and decides whether to activate the skill based on what the user typed:
+
+```markdown
+<!-- .claude/commands/explain-error.md -->
+Use this skill when the user pastes an error message, stack trace, or exception,
+or when they describe a crash, a test failure, or unexpected behavior.
+Also trigger when the user asks "why is this failing?" or "what does this error mean?".
+
+Diagnose the error provided. Structure your response as:
+1. **Root cause** — what is actually wrong (one sentence)
+2. **Why it happens** — the underlying mechanism
+3. **Fix** — the specific change to make
+4. **Prevention** — how to avoid this class of error in future
+```
+
+```markdown
+<!-- .claude/commands/add-types.md -->
+Use this skill when the user asks to add types, improve type safety,
+fix TypeScript errors, or remove `any` from the codebase.
+
+Add TypeScript types to the file or function specified.
+- Infer types from usage — don't add unnecessary generics
+- Use `unknown` over `any` for truly unknown inputs
+- Add JSDoc for complex generic types
+- Do not change runtime behavior — types only
+```
+
+---
+
+## Skill Persona and Focus
+
+Skills can declare a specialized role to adopt, which shapes the style and focus of responses:
+
+```markdown
+<!-- .claude/commands/security-review.md -->
+You are a security engineer performing a code review focused exclusively on security.
+Ignore style, formatting, and non-security issues — report only security findings.
+
+Use this skill when the user asks for a security review, mentions security,
+or asks about vulnerabilities in their code.
+
+Audit the specified code for:
+- Injection vulnerabilities (SQL, command, LDAP, XPath)
+- Authentication and authorization flaws
+- Sensitive data exposure (logs, error messages, responses)
+- Insecure deserialization
+- Cryptographic weaknesses (weak algorithms, hardcoded keys)
+- SSRF, open redirects, and path traversal
+
+For each finding: Severity (Critical/High/Medium/Low), Location, Description, Remediation.
+```
+
+```markdown
+<!-- .claude/commands/performance.md -->
+You are a performance engineer. Focus on throughput, latency, and resource usage.
+Ignore correctness issues unless they cause infinite loops or memory leaks.
+
+Use this skill when the user asks about performance, says something is slow,
+or asks to optimize code.
+
+Profile the specified code for:
+- Algorithmic complexity (O(n²) where O(n) is possible)
+- Database query patterns (N+1 queries, missing indexes, full scans)
+- Unnecessary computation in hot paths
+- Memory allocation patterns and GC pressure
+- I/O blocking in async contexts
+
+Report with estimated impact (High/Medium/Low) and specific line references.
+```
+
+---
+
+## Sharing Skills Across Teams
+
+Because skills are files in `.claude/commands/`, they are:
+- **Version controlled** — commit them to git, review changes in PRs
+- **Shareable** — new team members clone the repo and get all skills immediately
+- **Evolvable** — improve trigger conditions and prompts over time like any code
+
+```
+.claude/
+  commands/
+    commit.md          # Generate commit messages
+    review-pr.md       # Code review before merge
+    add-test.md        # Write tests for new code
+    security-review.md # Security-focused audit
+    explain-error.md   # Diagnose errors and exceptions
+    db-migration.md    # Generate Prisma migrations
+    changelog.md       # Write changelog entries
+```
+
+<Callout variant="info" title="Skills inherit all CLAUDE.md context">
+When a skill runs, it has access to everything in CLAUDE.md — commands, conventions, architecture context. You don't need to repeat project context in skill files. Write skills to express *what to do*; let CLAUDE.md express *the environment it's working in*.
+</Callout>
+
+---
+
+## Parameterized Skills with `$ARGUMENTS`
+
+Skills support the same `$ARGUMENTS` placeholder as slash commands:
+
+```markdown
+<!-- .claude/commands/benchmark.md -->
+Use this skill when the user asks to benchmark, measure performance of,
+or compare the speed of two implementations.
+
+Benchmark the following: $ARGUMENTS
+
+Steps:
+1. Read the current implementation
+2. Write a benchmark using the project's existing test runner
+3. Run it and report: median latency, p95, p99, memory usage
+4. Suggest the fastest correct implementation if improvements are possible
+```
+
+```markdown
+<!-- .claude/commands/generate-docs.md -->
+Generate API documentation for: $ARGUMENTS
+
+- Use the documentation format already established in this codebase
+- Include: description, parameters (name, type, required, description), return value, example
+- If the function has side effects, call them out explicitly
+- If there are error conditions, document them
+```
+
+<AntiPatternCard
+  title="Writing skills that are too broad"
+  wrong={
+    <>
+      <p>One catch-all skill that tries to handle everything:</p>
+      <pre><code>{`<!-- .claude/commands/help.md -->
+Use this skill for any coding task the user needs help with.
+
+Help the user with whatever they are asking.
+# This is just restating Claude's default behavior.
+# No specialized focus, no useful trigger condition,
+# no persona — it adds nothing over just talking to Claude normally.`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Narrow skills with specific triggers and focused output formats:</p>
+      <pre><code>{`<!-- .claude/commands/explain-regex.md -->
+Use this skill when the user shares a regex pattern and asks what it does,
+or when they describe what they want to match and need a regex written.
+
+For explaining: break down each part of the pattern with annotations.
+For writing: generate the pattern, explain each component, and include test cases.
+# Specific trigger condition + clear output format = reliable activation`}</code></pre>
+    </>
+  }
+  explanation="Skills are most useful when they have narrow scope, clear trigger conditions, and a specific output format. Broad skills don't activate reliably and don't improve on normal conversation."
+/>
+
+<KeyTakeaway>
+- Skills live in `.claude/commands/` as `.md` files — same directory as slash commands
+- The distinction: skills include trigger conditions and optional personas; slash commands are simpler prompt files
+- Trigger conditions are natural language — Claude reads them to decide when to auto-activate
+- Skills inherit CLAUDE.md context — no need to repeat project conventions inside skill files
+- `$ARGUMENTS` works in skills exactly as in slash commands
+- Commit skills to git — they're shared team workflows, not personal shortcuts
+</KeyTakeaway>

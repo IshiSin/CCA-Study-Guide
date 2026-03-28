@@ -1,0 +1,228 @@
+---
+title: "Slash Commands"
+description: "Creating custom slash commands in Claude Code — project-level and user-level commands, the $ARGUMENTS placeholder, and when to use them."
+estimatedMinutes: 15
+domain: 3
+---
+
+**Slash commands** are reusable prompt templates invoked with a `/` prefix in Claude Code. Built-in commands like `/help`, `/clear`, and `/compact` ship with Claude Code. You can create your own custom commands for any prompt you run repeatedly.
+
+## Where Commands Live
+
+| Location | Path | Scope |
+|---|---|---|
+| **Project commands** | `.claude/commands/<name>.md` | This repo only — commit to share with team |
+| **User commands** | `~/.claude/commands/<name>.md` | All your projects — personal shortcuts |
+
+The filename (without `.md`) becomes the command name:
+- `.claude/commands/review-pr.md` → `/review-pr`
+- `~/.claude/commands/standup.md` → `/standup`
+
+---
+
+## Basic Command Structure
+
+A command file is a Markdown prompt. When invoked, its content is sent as the user message:
+
+```markdown
+<!-- .claude/commands/review-pr.md -->
+Review the staged changes in this repository as if you were a senior engineer doing a pull request review.
+
+Focus on:
+1. Correctness — does the logic match the intent?
+2. Edge cases — what inputs could break this?
+3. Security — any injection risks, exposed secrets, or auth bypasses?
+4. Test coverage — are the important paths covered?
+
+Format your review as: Summary, Issues (severity: critical/major/minor), Suggestions.
+```
+
+Invoke it with:
+```
+/review-pr
+```
+
+---
+
+## The `$ARGUMENTS` Placeholder
+
+Commands become dynamic when they include `$ARGUMENTS`. Everything typed after the command name is substituted in:
+
+```markdown
+<!-- .claude/commands/explain.md -->
+Explain the following concept as if I'm familiar with software engineering
+but new to this specific topic. Use an analogy, then a concrete code example.
+
+Concept: $ARGUMENTS
+```
+
+Usage:
+```
+/explain dependency injection
+/explain database connection pooling
+/explain the event loop in Node.js
+```
+
+```markdown
+<!-- .claude/commands/ticket.md -->
+Create a well-structured GitHub issue for the following bug report.
+
+Include:
+- Clear title (imperative mood, under 60 chars)
+- Steps to reproduce (numbered list)
+- Expected vs actual behavior
+- Suggested labels from: bug, ux, performance, security, data-loss
+
+Bug report: $ARGUMENTS
+```
+
+Usage:
+```
+/ticket Login fails silently when email has uppercase letters
+```
+
+<ExamTip>
+The exam tests the exact placeholder syntax: `$ARGUMENTS` (all caps, dollar prefix). It is a single placeholder that captures everything after the command name as a single string — not individual positional arguments. If a command has no `$ARGUMENTS`, the command file content is sent verbatim with no user input appended.
+</ExamTip>
+
+---
+
+## Project Command Examples
+
+Commands that make sense to share across a team:
+
+```markdown
+<!-- .claude/commands/add-test.md -->
+Write a test for the function or module described below.
+Follow the existing test patterns in this codebase.
+Use the same test runner and assertion library as the existing tests.
+Add the test to the appropriate test file (don't create a new one unless necessary).
+
+What to test: $ARGUMENTS
+```
+
+```markdown
+<!-- .claude/commands/db-migration.md -->
+Generate a database migration for the following schema change.
+Follow Prisma migration conventions used in this project.
+Include both the up migration and verify the down migration is correct.
+After generating, remind me to run: npx prisma migrate dev --name <description>
+
+Migration needed: $ARGUMENTS
+```
+
+```markdown
+<!-- .claude/commands/changelog-entry.md -->
+Write a changelog entry for the changes in the current git diff (run git diff HEAD~1).
+Follow the Keep a Changelog format (https://keepachangelog.com).
+Categories: Added, Changed, Deprecated, Removed, Fixed, Security.
+Be concise — one line per change.
+```
+
+---
+
+## User Command Examples
+
+Personal shortcuts that follow you across all projects:
+
+```markdown
+<!-- ~/.claude/commands/standup.md -->
+Summarize what I've been working on based on:
+1. git log --since="yesterday" --author="$(git config user.email)" --oneline
+2. Any open TODO comments I've left in recently changed files
+
+Format as a standup update: What I did yesterday, what I'm doing today, any blockers.
+```
+
+```markdown
+<!-- ~/.claude/commands/debug.md -->
+Help me debug the following issue. Start by asking clarifying questions if needed,
+then suggest a systematic debugging approach before jumping to solutions.
+
+Issue: $ARGUMENTS
+```
+
+---
+
+## Command Discovery
+
+Running `/` with no command name (or checking the command menu) shows all available commands, grouped by scope:
+
+```
+Built-in commands:
+  /help          Show help
+  /clear         Clear conversation
+  /compact       Summarize and compress context
+
+Project commands (.claude/commands/):
+  /review-pr     Review staged changes as a PR review
+  /add-test      Write a test for a function or module
+  /db-migration  Generate a database migration
+
+User commands (~/.claude/commands/):
+  /standup       Summarize recent work as a standup update
+  /debug         Systematic debugging help
+```
+
+<Callout variant="info" title="Commands are just files — version control them">
+Project commands in `.claude/commands/` are plain text files. Commit them to your repository and every team member gets the same command set. This is how teams standardize common workflows — code review checklists, migration generators, documentation templates — without each person building their own.
+</Callout>
+
+---
+
+## Combining Commands With Context
+
+Commands have access to the same tools as any conversation. A command can instruct Claude to:
+- Run shell commands to gather context before answering
+- Read specific files
+- Use git history
+
+```markdown
+<!-- .claude/commands/security-audit.md -->
+Perform a security audit of the $ARGUMENTS directory.
+
+Steps:
+1. List all files in the directory
+2. Look for: hardcoded secrets, SQL string concatenation, eval() usage,
+   unvalidated user input passed to shell commands, missing auth checks
+3. Check package.json for known-vulnerable dependency versions
+4. Report findings by severity: Critical, High, Medium, Low
+
+Directory to audit: $ARGUMENTS
+```
+
+<AntiPatternCard
+  title="Duplicating commands across project and user scope"
+  wrong={
+    <>
+      <p>Keeping the same command in both personal and project locations:</p>
+      <pre><code>{`~/.claude/commands/review-pr.md  ← personal version
+.claude/commands/review-pr.md   ← project version (different content)
+
+# Result: /review-pr behaves differently depending on which project
+# you're in — confusing and hard to maintain`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Project-specific workflows belong in the project; personal style belongs globally:</p>
+      <pre><code>{`~/.claude/commands/my-style.md
+# Personal coding style preferences — applies everywhere
+
+.claude/commands/deploy.md
+# Project-specific deploy checklist — only makes sense here
+
+# If two projects need the same command, keep it global
+# If a command needs project-specific context, keep it in the project`}</code></pre>
+    </>
+  }
+  explanation="Decide scope by asking: does this command need project-specific knowledge (commands, file paths, conventions)? If yes, it belongs in the project. If it's a general workflow that works anywhere, it belongs in user scope."
+/>
+
+<KeyTakeaway>
+- Project commands: `.claude/commands/<name>.md` — committed to git, shared with team
+- User commands: `~/.claude/commands/<name>.md` — personal shortcuts across all projects
+- `$ARGUMENTS` captures everything after the command name and substitutes it in the prompt
+- Commands without `$ARGUMENTS` run verbatim — good for fixed workflows like PR review checklists
+- Commands can instruct Claude to run tools, read files, and use git — they're full prompts
+</KeyTakeaway>

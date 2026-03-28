@@ -1,0 +1,242 @@
+---
+title: "Task Decomposition"
+description: "Sequential, parallel, and hierarchical decomposition strategies — when to split tasks and how to size subtasks."
+estimatedMinutes: 20
+domain: 1
+---
+
+**Task decomposition** is the process of breaking a complex goal into subtasks that can be efficiently executed by agents. Poor decomposition leads to wasted context, coordination overhead, and hard-to-debug failures.
+
+## Three Decomposition Patterns
+
+<MermaidDiagram chart={`flowchart LR
+    subgraph Sequential ["Sequential (Pipeline)"]
+        direction LR
+        S1["Task A"] --> S2["Task B"] --> S3["Task C"]
+    end
+
+    subgraph Parallel ["Parallel (Fan-out / Fan-in)"]
+        direction TB
+        P0["Coordinator"] --> P1["Task A"]
+        P0 --> P2["Task B"]
+        P0 --> P3["Task C"]
+        P1 --> P4["Aggregator"]
+        P2 --> P4
+        P3 --> P4
+    end
+
+    subgraph Hierarchical ["Hierarchical (Tree)"]
+        direction TB
+        H0["Root Coordinator"] --> H1["Sub-coordinator A"]
+        H0 --> H2["Sub-coordinator B"]
+        H1 --> H3["Leaf Task"]
+        H1 --> H4["Leaf Task"]
+        H2 --> H5["Leaf Task"]
+    end`}
+  title="Three core decomposition patterns"
+/>
+
+### Sequential (Pipeline)
+
+Tasks must execute in order — each step's output is the next step's input.
+
+**Use when:** Tasks have strict data dependencies (B needs A's output)
+
+```python
+def sequential_pipeline(raw_document: str) -> dict:
+    """Extract → Validate → Enrich: each step feeds the next."""
+
+    # Step 1: Extract structured data
+    extraction = run_subagent(
+        "Extract all invoice fields as JSON",
+        {"document": raw_document}
+    )
+
+    # Step 2: Validate the extraction (needs step 1's output)
+    validation = run_subagent(
+        "Validate the extracted invoice data against business rules",
+        {"extracted_data": extraction}
+    )
+
+    # Step 3: Enrich (needs both prior steps)
+    enriched = run_subagent(
+        "Enrich validated invoice with vendor metadata",
+        {"validated_data": validation, "raw": raw_document}
+    )
+
+    return {"result": enriched, "stages": 3}
+```
+
+### Parallel (Fan-out / Fan-in)
+
+Independent tasks run simultaneously; results are aggregated.
+
+**Use when:** Tasks are independent and latency matters
+
+```python
+import asyncio
+
+async def parallel_research(topics: list[str]) -> str:
+    """Research multiple topics simultaneously, then synthesize."""
+
+    # Fan-out: all research tasks run in parallel
+    research_tasks = [
+        asyncio.create_task(
+            run_subagent_async("Research this topic thoroughly", {"topic": t})
+        )
+        for t in topics
+    ]
+    results = await asyncio.gather(*research_tasks)
+
+    # Fan-in: aggregator synthesizes all results
+    combined = "\n\n".join(
+        f"### {topic}\n{result}"
+        for topic, result in zip(topics, results)
+    )
+    return run_subagent(
+        "Synthesize these research sections into a coherent report",
+        {"sections": combined}
+    )
+```
+
+### Hierarchical (Tree)
+
+Sub-coordinators manage clusters of related tasks, reporting up to a root coordinator.
+
+**Use when:** Task count is large (10+) or task groups have distinct expertise requirements
+
+```python
+def hierarchical_agent(enterprise_goal: str) -> str:
+    # Root coordinator creates sub-coordinators per domain
+    domains = decompose_into_domains(enterprise_goal)
+
+    domain_reports = {}
+    for domain in domains:
+        # Each sub-coordinator manages its own team of leaf agents
+        domain_reports[domain["name"]] = domain_coordinator(
+            goal=domain["description"],
+            tools=domain["allowed_tools"],
+        )
+
+    # Root aggregates domain reports
+    return synthesize_final_report(enterprise_goal, domain_reports)
+```
+
+---
+
+## When to Decompose vs. Stay Monolithic
+
+Not every task benefits from decomposition. Decomposition adds coordination overhead — subagent spawning, context packaging, result parsing.
+
+| Factor | Keep Monolithic | Decompose |
+|---|---|---|
+| **Task complexity** | Single-focus, ≤ 2 tool types | Multi-domain, 3+ distinct capabilities |
+| **Context sharing** | Subtasks heavily interdependent | Subtasks mostly independent |
+| **Latency** | Sequential is fine | Parallelism would reduce time |
+| **Error recovery** | Fail-fast is acceptable | Subtasks can be retried independently |
+| **Token budget** | Fits in one context window | Would exhaust single context |
+| **Model cost** | Uniform capability needed | Subtasks have different complexity |
+
+<ExamTip>
+The exam frequently presents a scenario and asks "should this be a single agent or multiple agents?" The correct answer hinges on: (1) whether subtasks are truly independent, (2) whether the total token requirement would exceed a single context window, and (3) whether different subtasks need different model tiers.
+</ExamTip>
+
+---
+
+## Context Budget Per Subtask
+
+Each subtask gets its own context window, but you must plan the budget.
+
+```python
+# Approximate token budgets for common subtask types
+SUBTASK_BUDGETS = {
+    "extraction":   {"input": 8_000,  "output": 2_000},   # Structured extraction
+    "analysis":     {"input": 16_000, "output": 4_000},   # Deep analysis
+    "generation":   {"input": 4_000,  "output": 8_000},   # Content generation
+    "review":       {"input": 20_000, "output": 2_000},   # Code/doc review
+    "classification": {"input": 2_000, "output": 500},   # Simple classification
+}
+
+def plan_decomposition(
+    goal: str,
+    subtasks: list[dict],
+    context_window_limit: int = 200_000,
+) -> dict:
+    """Validate that decomposition fits within budget."""
+    total_tokens = sum(
+        SUBTASK_BUDGETS.get(t["type"], {}).get("input", 10_000)
+        for t in subtasks
+    )
+    parallel_max = max(
+        SUBTASK_BUDGETS.get(t["type"], {}).get("input", 10_000)
+        for t in subtasks
+    )
+    return {
+        "subtask_count": len(subtasks),
+        "total_sequential_tokens": total_tokens,
+        "max_parallel_peak_tokens": parallel_max,
+        "fits_in_window": parallel_max < context_window_limit,
+        "recommendation": "parallel" if total_tokens > context_window_limit * 0.5 else "sequential",
+    }
+```
+
+---
+
+## Decomposition Granularity
+
+**Too coarse:** Subtasks are still too complex, agents still fail
+**Too fine:** Coordination overhead dominates, excessive API calls
+**Right size:** Each subtask can be completed reliably with the tools and context it receives
+
+```python
+# TOO COARSE: "Write a complete market analysis" — too complex for one subagent
+# TOO FINE: "Find the word 'revenue' in the document" — doesn't justify a subagent
+# RIGHT: "Extract all revenue figures and growth rates from Q3 earnings report"
+
+def well_scoped_subtask(description: str) -> bool:
+    """A subtask is well-scoped if it:
+    - Has a single clear output format
+    - Requires <= 3 tools
+    - Can be completed in <= 5 iterations
+    - Has all needed context passed explicitly
+    """
+    ...
+```
+
+<AntiPatternCard
+  title="Decomposing by implementation detail, not by domain"
+  wrong={
+    <>
+      <p>Splitting tasks based on how you'd write code, not what domain expertise is needed:</p>
+      <pre><code>{`# WRONG: these aren't independent domains
+tasks = [
+    "Write the first paragraph",
+    "Write the second paragraph",
+    "Write the third paragraph",
+]
+# Result: agents have no context about each other's paragraphs,
+# producing incoherent output`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Split by domain expertise or data independence:</p>
+      <pre><code>{`# RIGHT: each task is a distinct domain
+tasks = [
+    {"task": "Research market data", "output": "market_report"},
+    {"task": "Analyze competitor landscape", "output": "competitor_analysis"},
+    {"task": "Synthesize into executive summary",
+     "depends_on": ["market_report", "competitor_analysis"]},
+]`}</code></pre>
+    </>
+  }
+  explanation="Decompose by what information each subtask needs and what expertise it applies — not by arbitrary size."
+/>
+
+<KeyTakeaway>
+- Three patterns: Sequential (ordered dependencies), Parallel (independent), Hierarchical (large/complex task trees)
+- Decompose when: tasks are independent, context would overflow, different model tiers would help, or independent retry is valuable
+- Keep monolithic when: subtasks are heavily interdependent, task is simple, or coordination overhead exceeds benefit
+- Budget context per subtask: plan for input + output tokens for each agent invocation
+- Right-size subtasks: single clear output, ≤ 3 tools, completable in ≤ 5 iterations
+</KeyTakeaway>

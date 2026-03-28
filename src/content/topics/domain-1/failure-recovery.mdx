@@ -1,0 +1,311 @@
+---
+title: "Failure Recovery"
+description: "Structured error handling, retry with backoff, and error propagation from subagents through the coordinator to the user."
+estimatedMinutes: 20
+domain: 1
+---
+
+Production agents fail. Tools return errors, models time out, subagents produce invalid output, context windows overflow. A production-ready system anticipates failure and recovers gracefully.
+
+## The Three Failure Propagation Levels
+
+<MermaidDiagram chart={`flowchart TD
+    User["👤 User"] <-->|"Meaningful error or\npartial result"| Coord
+
+    subgraph Coordinator ["Coordinator Agent"]
+        Coord["Decides: retry,\ndegrade, or escalate"]
+    end
+
+    subgraph Subagents ["Subagents"]
+        A["Subagent A\n✅ Success"]
+        B["Subagent B\n❌ Fails with\nstructured error"]
+        C["Subagent C\n⚠️ Partial result"]
+    end
+
+    Coord --> A
+    Coord --> B
+    Coord --> C
+    A -->|"result"| Coord
+    B -->|"StructuredError\n{code, message, retryable}"| Coord
+    C -->|"PartialResult\n{data, missing_fields}"| Coord
+
+    style Coordinator fill:#1e1f52,stroke:#6470f3,color:#e6edf3
+    style Subagents fill:#0f172a,stroke:#334155,color:#e6edf3
+    style B fill:#450a0a,stroke:#ef4444,color:#e6edf3
+    style C fill:#451a03,stroke:#f97316,color:#e6edf3`}
+  title="Error propagation: subagent → coordinator → user"
+/>
+
+---
+
+## Structured Error Returns
+
+Tools and subagents should return **structured errors** — not bare exceptions and not silent failures. The coordinator needs enough information to decide whether to retry, degrade, or escalate.
+
+```python
+from dataclasses import dataclass
+from typing import Any
+
+@dataclass
+class ToolResult:
+    success: bool
+    data: Any = None
+    error_code: str | None = None
+    error_message: str | None = None
+    retryable: bool = False
+    partial_data: Any = None  # If partial success
+
+    def to_json(self) -> str:
+        import json
+        return json.dumps({
+            "success": self.success,
+            "data": self.data,
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "retryable": self.retryable,
+            "partial_data": self.partial_data,
+        })
+
+
+# Tool implementation returning structured errors
+@tool
+def fetch_stock_price(ticker: str) -> str:
+    """Fetch current stock price for a ticker symbol."""
+    try:
+        price = external_api.get_price(ticker)
+        return ToolResult(success=True, data={"ticker": ticker, "price": price}).to_json()
+    except RateLimitError as e:
+        return ToolResult(
+            success=False,
+            error_code="RATE_LIMITED",
+            error_message=str(e),
+            retryable=True,          # Tell coordinator: worth retrying
+        ).to_json()
+    except TickerNotFoundError:
+        return ToolResult(
+            success=False,
+            error_code="TICKER_NOT_FOUND",
+            error_message=f"No data found for ticker: {ticker}",
+            retryable=False,         # Tell coordinator: don't bother retrying
+        ).to_json()
+    except Exception as e:
+        return ToolResult(
+            success=False,
+            error_code="UNKNOWN_ERROR",
+            error_message=f"Unexpected error: {str(e)[:200]}",
+            retryable=True,
+        ).to_json()
+```
+
+---
+
+## Retry with Exponential Backoff
+
+Transient failures (rate limits, timeouts, network errors) warrant retries. Always use exponential backoff with jitter to avoid thundering herd.
+
+```python
+import time
+import random
+
+def retry_with_backoff(
+    fn,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    max_delay: float = 30.0,
+    retryable_codes: set[str] = frozenset({"RATE_LIMITED", "TIMEOUT", "UNKNOWN_ERROR"}),
+):
+    """
+    Retry a function with exponential backoff.
+    Only retries if the error code is in retryable_codes.
+    """
+    import json
+
+    for attempt in range(max_retries + 1):
+        result_json = fn()
+        result = json.loads(result_json)
+
+        if result["success"]:
+            return result_json
+
+        error_code = result.get("error_code", "UNKNOWN")
+
+        if not result.get("retryable", False) or error_code not in retryable_codes:
+            # Non-retryable error — fail fast
+            raise RuntimeError(f"Non-retryable error: {error_code}: {result.get('error_message')}")
+
+        if attempt == max_retries:
+            raise RuntimeError(
+                f"Failed after {max_retries} retries. Last error: {error_code}"
+            )
+
+        # Exponential backoff with jitter
+        delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+        print(f"Attempt {attempt + 1} failed ({error_code}). Retrying in {delay:.1f}s...")
+        time.sleep(delay)
+```
+
+---
+
+## Coordinator Error Handling
+
+The coordinator must handle subagent failures gracefully — deciding whether to retry, use a degraded result, or escalate to the user.
+
+```python
+from enum import Enum
+
+class RecoveryStrategy(Enum):
+    RETRY = "retry"
+    DEGRADE = "degrade"       # Use partial result
+    SKIP = "skip"             # Skip optional subtask
+    ESCALATE = "escalate"     # Return error to user
+    ABORT = "abort"           # Stop entire workflow
+
+def coordinator_with_recovery(goal: str, subtasks: list[dict]) -> dict:
+    results = {}
+    failures = []
+
+    for task in subtasks:
+        for attempt in range(3):
+            try:
+                result = run_subagent(
+                    task_spec=task["description"],
+                    context_data={k: results[k] for k in task.get("needs", []) if k in results},
+                )
+                results[task["id"]] = result
+                break  # Success
+
+            except Exception as e:
+                error_info = {
+                    "task_id": task["id"],
+                    "attempt": attempt + 1,
+                    "error": str(e),
+                }
+
+                strategy = decide_recovery_strategy(task, error_info, attempt)
+
+                if strategy == RecoveryStrategy.RETRY and attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+
+                elif strategy == RecoveryStrategy.DEGRADE:
+                    results[task["id"]] = f"[PARTIAL: {str(e)[:100]}]"
+                    failures.append(error_info)
+                    break
+
+                elif strategy == RecoveryStrategy.SKIP:
+                    # Task is optional — continue without it
+                    failures.append({**error_info, "skipped": True})
+                    break
+
+                elif strategy in (RecoveryStrategy.ESCALATE, RecoveryStrategy.ABORT):
+                    raise RuntimeError(
+                        f"Critical task '{task['id']}' failed: {str(e)}"
+                    ) from e
+
+    return {
+        "results": results,
+        "complete": len(failures) == 0,
+        "failures": failures,
+        "degraded": len(failures) > 0,
+    }
+
+
+def decide_recovery_strategy(
+    task: dict,
+    error_info: dict,
+    attempt: int,
+) -> RecoveryStrategy:
+    """Decide recovery strategy based on task criticality and error type."""
+    is_critical = task.get("critical", False)
+    is_last_attempt = attempt >= 2
+
+    if not is_last_attempt:
+        return RecoveryStrategy.RETRY
+
+    if is_critical:
+        return RecoveryStrategy.ESCALATE
+
+    if task.get("optional", False):
+        return RecoveryStrategy.SKIP
+
+    return RecoveryStrategy.DEGRADE
+```
+
+---
+
+## Error Context Propagation
+
+When escalating to the user, include actionable context — not just "something went wrong."
+
+```python
+@dataclass
+class AgentError:
+    code: str
+    message: str                    # Human-readable
+    failed_task: str | None = None
+    completed_tasks: list = None
+    partial_result: str | None = None
+    suggested_action: str | None = None
+
+    def to_user_message(self) -> str:
+        parts = [f"**{self.message}**"]
+        if self.partial_result:
+            parts.append(f"\nPartial result available: {self.partial_result}")
+        if self.completed_tasks:
+            parts.append(f"\nCompleted: {', '.join(self.completed_tasks)}")
+        if self.suggested_action:
+            parts.append(f"\nSuggested: {self.suggested_action}")
+        return "\n".join(parts)
+```
+
+<AntiPatternCard
+  title="Silent failure vs. structured error context"
+  wrong={
+    <>
+      <p>Subagent catches an error and returns empty or generic output:</p>
+      <pre><code>{`def research_subagent(topic: str) -> str:
+    try:
+        return search_api.query(topic)
+    except Exception:
+        return ""  # ← SILENT FAILURE
+        # or: return "I couldn't find information on this topic."
+        # Coordinator has no idea what failed or whether to retry`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Return structured error with code, message, and retryable flag:</p>
+      <pre><code>{`def research_subagent(topic: str) -> str:
+    try:
+        return search_api.query(topic)
+    except RateLimitError:
+        return json.dumps({
+            "success": False,
+            "error_code": "RATE_LIMITED",
+            "error_message": "Search API rate limit hit",
+            "retryable": True,
+        })
+    except Exception as e:
+        return json.dumps({
+            "success": False,
+            "error_code": "SEARCH_FAILED",
+            "error_message": str(e)[:200],
+            "retryable": False,
+        })`}</code></pre>
+    </>
+  }
+  explanation="Silent failures are the hardest bugs to diagnose in multi-agent systems. The coordinator can't retry what it doesn't know failed."
+/>
+
+<ExamTip>
+The exam tests the difference between **fail-fast** (abort on first error) and **graceful degradation** (continue with partial results). Graceful degradation is preferred when: (1) the failing subtask is optional, (2) a partial result is better than no result, or (3) remaining tasks don't depend on the failed one. Fail-fast is preferred when the failing task is critical to correctness.
+</ExamTip>
+
+<KeyTakeaway>
+- Tools and subagents must return **structured errors** with: `success`, `error_code`, `error_message`, `retryable`
+- Retry with exponential backoff + jitter for transient errors (rate limits, timeouts)
+- Coordinators choose from: Retry, Degrade (partial result), Skip (optional task), Escalate (critical failure), Abort
+- Mark tasks as `critical=True` or `optional=True` to drive recovery strategy decisions
+- When escalating to users, include: what failed, what completed, any partial result, and suggested action
+- Silent failure is the worst option — always surface errors with enough context to recover
+</KeyTakeaway>

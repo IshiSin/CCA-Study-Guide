@@ -1,0 +1,42 @@
+export const dynamic = "force-dynamic"
+
+import { compileMDX } from "next-mdx-remote/rsc"
+import remarkGfm from "remark-gfm"
+import { mdxComponents } from "@/components/study/mdx-components"
+import { TopicLayout } from "@/components/study/topic-layout"
+import { getMdxContent } from "@/lib/mdx"
+import { notFound } from "next/navigation"
+
+export const metadata = {
+  title: "Slash Commands — CCA Study Guide",
+}
+
+export default async function SlashCommandsPage() {
+  const mdx = getMdxContent("domain-3/slash-commands")
+  if (!mdx) notFound()
+
+  const { content } = await compileMDX({
+    source: mdx.content,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    components: mdxComponents as any,
+    options: { mdxOptions: { remarkPlugins: [remarkGfm], rehypePlugins: [] } },
+  })
+
+  return (
+    <TopicLayout
+      title={mdx.frontmatter.title}
+      description={mdx.frontmatter.description}
+      estimatedMinutes={mdx.frontmatter.estimatedMinutes}
+      domainName="Domain 3: Claude Code Configuration & Workflows"
+      domainSlug="domain-3"
+      breadcrumbs={[
+        { label: "Domain 3", href: "/study/domain-3" },
+        { label: mdx.frontmatter.title },
+      ]}
+      prev={{ title: "CLAUDE.md Hierarchy", href: "/study/domain-3/claude-md-hierarchy" }}
+      next={{ title: "Agent Skills", href: "/study/domain-3/agent-skills" }}
+    >
+      {content}
+    </TopicLayout>
+  )
+}

@@ -1,0 +1,299 @@
+---
+title: "Tool Descriptions"
+description: "Writing tool descriptions that reliably guide Claude — when-to-use, parameter docs, return value contracts, and common failure modes."
+estimatedMinutes: 20
+domain: 2
+---
+
+A tool description is not just documentation — it is **part of your prompt**. Claude reads tool descriptions as instructions to decide when and how to call each tool. A vague or incomplete description causes tool misuse or non-use, regardless of how well the underlying implementation works.
+
+## The Four-Part Description Contract
+
+Every tool description should answer four questions:
+
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Tool Description Structure</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-purple-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-mono text-purple-400 font-semibold w-1/4">Part</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/4">Question answered</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-1/2">Example</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-purple-400">What it does</td>
+        <td className="px-4 py-3 text-muted-foreground">What action does this perform?</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">"Searches the product catalog by keyword or SKU"</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-purple-400">When to use it</td>
+        <td className="px-4 py-3 text-muted-foreground">Under what conditions should Claude call this?</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">"Use when the user asks about product availability, pricing, or specifications"</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-purple-400">What it returns</td>
+        <td className="px-4 py-3 text-muted-foreground">What shape does the response have?</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">"Returns JSON array of products with id, name, price, and in_stock fields"</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 font-mono text-purple-400">Constraints</td>
+        <td className="px-4 py-3 text-muted-foreground">What are the limits or caveats?</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">"Maximum 50 results. Does not include discontinued products."</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+---
+
+## A Complete Tool Description Example
+
+```python
+from anthropic.agents import tool
+
+@tool
+def search_products(
+    query: str,
+    category: str | None = None,
+    max_price_usd: float | None = None,
+    in_stock_only: bool = False,
+) -> str:
+    """
+    Search the product catalog by keyword, optionally filtered by category and price.
+
+    Use this tool when the user asks about:
+    - Product availability or pricing
+    - Finding products matching a description
+    - Browsing a product category
+
+    Do NOT use this tool to:
+    - Place orders (use place_order instead)
+    - Check order status (use get_order_status instead)
+    - Get product reviews (use get_reviews instead)
+
+    Args:
+        query: Search terms describing the product. Supports partial matches.
+               Examples: "wireless headphones", "size 10 running shoes", "SKU-4821"
+        category: Optional product category to restrict search.
+                  Valid values: "electronics", "clothing", "home", "sports", "books"
+                  Omit to search all categories.
+        max_price_usd: Optional upper price limit in USD. Omit for no price filter.
+        in_stock_only: If True, only return products currently in stock.
+                       Default False returns all products including backordered.
+
+    Returns:
+        JSON array of matching products. Each product has:
+        - id (string): Unique product identifier
+        - name (string): Display name
+        - price_usd (float): Current price
+        - category (string): Product category
+        - in_stock (bool): Current availability
+        - description (string): Short product description
+        Empty array [] if no products match.
+
+    Limits: Maximum 50 results per call. Does not include discontinued products.
+    """
+    # Implementation
+    return '[]'
+```
+
+<ExamTip>
+The exam tests whether you know that **"Do NOT use this tool to"** sections are just as important as "Use this when" sections. Without negative guidance, Claude may choose the wrong tool for an ambiguous query — for example, calling `search_products` when it should call `get_order_status` because both can "find information about products."
+</ExamTip>
+
+---
+
+## Parameter Documentation
+
+Each parameter needs its own description that covers:
+
+```python
+@tool
+def create_invoice(
+    customer_id: str,
+    line_items: list[dict],
+    due_date: str,
+    currency: str = "USD",
+    notes: str | None = None,
+) -> str:
+    """
+    Create a new invoice and send it to the customer.
+
+    Args:
+        customer_id: The unique customer identifier from the CRM.
+                     Format: "cust_" followed by alphanumeric ID (e.g. "cust_a1b2c3").
+                     Obtain via get_customer or search_customers if you only have a name.
+
+        line_items: List of items to invoice. Each item must be a dict with:
+                    - "description" (str): What was provided — be specific
+                    - "quantity" (int or float): Amount (e.g. 2 for 2 units, 1.5 for 1.5 hours)
+                    - "unit_price_usd" (float): Price per unit in USD
+                    Example: [{"description": "Consulting hours", "quantity": 3, "unit_price_usd": 150.0}]
+
+        due_date: Payment due date in ISO 8601 format: "YYYY-MM-DD".
+                  Common values: 30 days net = today + 30 days.
+                  Must be today or a future date.
+
+        currency: Three-letter ISO 4217 currency code. Default "USD".
+                  Supported: "USD", "EUR", "GBP", "CAD", "AUD".
+
+        notes: Optional free-text notes shown on the invoice (e.g. payment instructions,
+               project reference number). Max 500 characters.
+
+    Returns:
+        JSON with invoice_id, invoice_url (shareable link), and total_amount_usd.
+    """
+    pass
+```
+
+### Key Rules for Parameter Docs
+
+- **Always document the format** for dates, IDs, enums, and nested objects
+- **Explain where to get values** — if `customer_id` requires a prior lookup, say so
+- **Document defaults explicitly** — don't rely on the type hint alone
+- **Give examples** for non-obvious inputs
+
+---
+
+## Discriminating Between Similar Tools
+
+When you have multiple tools that could apply to the same query, the descriptions must draw clear boundaries:
+
+```python
+@tool
+def get_product(product_id: str) -> str:
+    """
+    Fetch full details for a single product by its exact ID.
+
+    Use this when you already have a product_id and need complete details
+    (specs, all images, full description, pricing history).
+
+    Do NOT use this to search for products — use search_products instead.
+    The product_id must be an exact match (e.g. "prod_xyz789").
+    Searching by name will return an error.
+
+    Returns: Full product object with all fields including specs and images.
+    """
+    pass
+
+@tool
+def search_products(query: str) -> str:
+    """
+    Search for products by name, description, or partial SKU.
+
+    Use this when you have a description or partial identifier and need
+    to find the right product. Returns a list of matching products with
+    basic fields (id, name, price, in_stock).
+
+    Do NOT use this when you have an exact product_id — use get_product instead,
+    which is faster and returns more complete data.
+
+    Returns: JSON array of products (up to 50). Each item has id, name, price_usd, in_stock.
+    """
+    pass
+```
+
+<AntiPatternCard
+  title="Vague descriptions that don't guide tool selection"
+  wrong={
+    <>
+      <p>Descriptions that describe implementation, not behavior:</p>
+      <pre><code>{`@tool
+def get_product(product_id: str) -> str:
+    """Gets product data from the database."""
+    pass
+
+@tool
+def search_products(query: str) -> str:
+    """Searches products."""
+    pass
+# Claude has no idea when to use which tool, or what they return.
+# It will guess — and often guess wrong.`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Descriptions that guide selection, format inputs, and explain outputs:</p>
+      <pre><code>{`@tool
+def get_product(product_id: str) -> str:
+    """
+    Fetch complete details for one product by exact ID.
+    Use when you have a product_id. Returns full specs and images.
+    Do NOT use for searching — use search_products for that.
+    """
+    pass
+
+@tool
+def search_products(query: str) -> str:
+    """
+    Find products by name or description when you don't have an ID.
+    Returns list of matches with id, name, price. Use get_product
+    for full details once you have the right product_id.
+    """
+    pass`}</code></pre>
+    </>
+  }
+  explanation="Tool descriptions are part of the prompt. Vague descriptions cause tool misuse, hallucinated arguments, and incorrect tool selection — all exam-tested failure modes."
+/>
+
+---
+
+## Common Description Failure Modes
+
+| Failure | Symptom | Fix |
+|---|---|---|
+| Missing "when to use" | Claude calls tool for unrelated queries | Add explicit trigger conditions |
+| Missing "do NOT use" | Claude uses wrong tool for overlapping queries | Add negative guidance |
+| No return description | Claude misinterprets the response | Document response schema |
+| Undocumented enums | Claude invents invalid enum values | List all valid values explicitly |
+| Missing format for IDs/dates | Claude passes wrong format | Show format and example |
+| No mention of required lookups | Claude passes names where IDs are required | State upstream dependencies |
+
+---
+
+## Return Value Contracts
+
+Claude uses the return description to parse and reason about the response. Be precise:
+
+```python
+@tool
+def run_sql_query(sql: str) -> str:
+    """
+    Execute a read-only SQL SELECT query against the analytics database.
+
+    Use for: aggregate statistics, user counts, revenue reports, trend analysis.
+    Do NOT use for: INSERT, UPDATE, DELETE — use data_write_tool for mutations.
+
+    Args:
+        sql: A valid PostgreSQL SELECT statement. Must not contain
+             INSERT, UPDATE, DELETE, DROP, CREATE, or TRUNCATE.
+             Max 10,000 rows returned.
+
+    Returns:
+        On success: JSON object with:
+        - "columns": list of column names in result order
+        - "rows": list of row arrays (each row matches column order)
+        - "row_count": total rows returned
+        Example: {"columns": ["date", "revenue"], "rows": [["2024-01", 50000]], "row_count": 1}
+
+        On error: JSON object with:
+        - "error": string describing what went wrong
+        - "error_type": one of "syntax_error", "permission_denied", "timeout"
+    """
+    pass
+```
+
+<ExamTip>
+Document both the **success shape** and the **error shape** in your return description. Claude needs to know how to detect errors in the response and decide whether to retry, report to the user, or try a different approach.
+</ExamTip>
+
+<KeyTakeaway>
+- Tool descriptions are prompt instructions, not just documentation — quality directly affects reliability
+- Every description needs: what it does, when to use it, what it returns, and constraints/limits
+- "Do NOT use this for" sections prevent incorrect tool selection on ambiguous queries
+- Document all parameter formats, valid enum values, and required prior lookups
+- Document both success and error return shapes — Claude uses this to handle results correctly
+- Discriminate between similar tools with explicit boundaries in the description
+</KeyTakeaway>

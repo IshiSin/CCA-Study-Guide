@@ -1,0 +1,312 @@
+---
+title: "Structured Output"
+description: "Getting reliable JSON from Claude — tool_use schemas for extraction, JSON mode, schema design, and choosing between extraction approaches."
+estimatedMinutes: 25
+domain: 4
+---
+
+**Structured output** means getting Claude to return data in a predictable, machine-parseable format — typically JSON — instead of prose. The exam tests two primary mechanisms: `tool_use` schemas and direct JSON prompting.
+
+## The Core Problem
+
+Claude is a language model, not a JSON serializer. Without guidance, it may:
+- Add explanatory text before or after JSON
+- Produce different key names across calls
+- Omit optional fields entirely
+- Use inconsistent types (string vs. number)
+
+The solution is to use the API's structured mechanisms rather than relying on prompt instructions alone.
+
+---
+
+## Method 1: tool_use for Structured Extraction
+
+The most reliable way to get structured output is to define a tool with a JSON Schema and have Claude "call" it. This forces the output to conform to the schema:
+
+```python
+import anthropic
+import json
+
+client = anthropic.Anthropic()
+
+# Define the tool with a JSON Schema
+tools = [
+    {
+        "name": "extract_contract_metadata",
+        "description": "Extract structured metadata from a contract document. Call this tool once with all extracted fields.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "party_a": {
+                    "type": "string",
+                    "description": "Name of the first contracting party"
+                },
+                "party_b": {
+                    "type": "string",
+                    "description": "Name of the second contracting party"
+                },
+                "effective_date": {
+                    "type": "string",
+                    "description": "Contract start date in ISO 8601 format (YYYY-MM-DD)"
+                },
+                "duration_months": {
+                    "type": "integer",
+                    "description": "Contract duration in months"
+                },
+                "total_value_usd": {
+                    "type": "number",
+                    "description": "Total contract value in USD"
+                },
+                "contract_type": {
+                    "type": "string",
+                    "enum": ["service", "license", "employment", "nda", "other"],
+                    "description": "Category of contract"
+                },
+                "auto_renews": {
+                    "type": "boolean",
+                    "description": "Whether the contract auto-renews"
+                }
+            },
+            "required": ["party_a", "party_b", "effective_date", "contract_type"]
+        }
+    }
+]
+
+response = client.messages.create(
+    model="claude-opus-4-6",
+    max_tokens=1024,
+    tools=tools,
+    # Force Claude to use the tool rather than respond in prose
+    tool_choice={"type": "any"},
+    messages=[
+        {
+            "role": "user",
+            "content": f"Extract the metadata from this contract:\n\n{contract_text}"
+        }
+    ]
+)
+
+# Parse the tool call input
+tool_use_block = next(
+    block for block in response.content
+    if block.type == "tool_use"
+)
+extracted = tool_use_block.input  # Already a Python dict — no json.loads() needed
+```
+
+<ExamTip>
+`tool_choice: {"type": "any"}` forces Claude to call one of the provided tools. Without it, Claude may choose to respond in prose instead of calling the tool. For extraction tasks where you always need structured output, always set `tool_choice`.
+</ExamTip>
+
+---
+
+## tool_use Schema Design
+
+The quality of your schema determines the quality of Claude's output. Key schema design principles:
+
+### Use `description` fields extensively
+
+Claude reads descriptions to understand how to fill each field. Descriptions are not optional:
+
+```python
+# Weak schema — Claude has to guess intent
+"start_date": {"type": "string"}
+
+# Strong schema — Claude knows exactly what to produce
+"start_date": {
+    "type": "string",
+    "description": "Contract start date in ISO 8601 format (YYYY-MM-DD). If only a month/year is specified, use the first of the month."
+}
+```
+
+### Use `enum` for constrained values
+
+```python
+"priority": {
+    "type": "string",
+    "enum": ["critical", "high", "medium", "low"],
+    "description": "Priority level of the issue"
+}
+```
+
+Enums prevent Claude from inventing values like "urgent", "p0", or "MEDIUM".
+
+### Mark required vs. optional fields carefully
+
+```python
+{
+    "type": "object",
+    "properties": {
+        "issue_id": {"type": "string"},       # always present
+        "title": {"type": "string"},           # always present
+        "assignee": {"type": "string"},        # may not exist
+        "due_date": {"type": "string"},        # may not exist
+    },
+    "required": ["issue_id", "title"]          # optional fields may be omitted
+}
+```
+
+### Use nested objects for related fields
+
+```python
+"address": {
+    "type": "object",
+    "properties": {
+        "street": {"type": "string"},
+        "city": {"type": "string"},
+        "state": {"type": "string"},
+        "zip": {"type": "string"},
+        "country": {"type": "string", "default": "US"}
+    },
+    "required": ["street", "city", "state", "zip"]
+}
+```
+
+---
+
+## Method 2: Direct JSON Prompting
+
+When you cannot use the tools API (streaming contexts, some integrations), direct JSON prompting is the fallback:
+
+```python
+system = """You are a data extraction assistant.
+
+IMPORTANT: Your response must be valid JSON only. No text before or after
+the JSON object. No markdown code fences. No explanation.
+
+Use exactly this schema:
+{
+  "sentiment": "positive" | "negative" | "neutral",
+  "confidence": 0.0-1.0,
+  "key_topics": ["string"],
+  "requires_response": true | false
+}"""
+
+response = client.messages.create(
+    model="claude-opus-4-6",
+    max_tokens=512,
+    system=system,
+    messages=[{"role": "user", "content": customer_message}]
+)
+
+import json
+data = json.loads(response.content[0].text)
+```
+
+<Callout variant="info" title="Add an assistant prefill to guarantee JSON starts">
+You can add a partial assistant message to lock in the start of Claude's response:
+
+```python
+messages=[
+    {"role": "user", "content": customer_message},
+    {"role": "assistant", "content": "{"},  # Claude continues from here
+]
+```
+
+This prevents Claude from starting with "Sure! Here's the JSON:" and guarantees the response starts with a JSON object.
+</Callout>
+
+---
+
+## Choosing: tool_use vs. Direct JSON Prompting
+
+| Factor | tool_use | Direct JSON Prompting |
+|---|---|---|
+| **Schema enforcement** | Strong — validated by API | Weak — prompt-only |
+| **Reliability** | High — Claude trained on tool calling | Lower — depends on prompt quality |
+| **Streaming support** | Limited | Full |
+| **Nesting complexity** | Handles deep nesting well | Gets unreliable beyond 2-3 levels |
+| **Multiple schemas** | Easy — define multiple tools | Hard — one schema per prompt |
+| **Token cost** | Tool schemas consume tokens | Schema in system prompt also consumes tokens |
+
+Use `tool_use` for production extraction pipelines. Use direct JSON prompting for:
+- Streaming responses
+- Simple schemas (1–2 levels of nesting, few fields)
+- Contexts where the tools API isn't available
+
+---
+
+## Extracting Multiple Objects
+
+To extract a list of structured items, wrap them in a top-level array schema:
+
+```python
+tools = [
+    {
+        "name": "extract_line_items",
+        "description": "Extract all line items from the invoice. Return an array with one object per line item.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "line_items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "description": {"type": "string"},
+                            "quantity": {"type": "number"},
+                            "unit_price": {"type": "number"},
+                            "total": {"type": "number"}
+                        },
+                        "required": ["description", "quantity", "unit_price", "total"]
+                    }
+                },
+                "subtotal": {"type": "number"},
+                "tax": {"type": "number"},
+                "total": {"type": "number"}
+            },
+            "required": ["line_items", "total"]
+        }
+    }
+]
+```
+
+<AntiPatternCard
+  title="Relying on prose instructions alone for structured output"
+  wrong={
+    <>
+      <p>Using text instructions without schema enforcement:</p>
+      <pre><code>{`system = """Always respond in JSON format with keys:
+sentiment, confidence, topics, action_required"""
+
+# Problems:
+# - "Always" doesn't enforce — Claude can still start with "Sure!"
+# - No types specified — confidence could be "high" or 0.9
+# - No required/optional distinction
+# - First call returns {"sentiment": "positive", "confidence": 0.9}
+# - Second call returns {"sentiment": "Positive", "confidence": "high", "topics": "billing"}
+# - json.loads() fails intermittently`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Use tool_use with a full JSON Schema for production extraction:</p>
+      <pre><code>{`tools = [{
+    "name": "classify_message",
+    "description": "Classify a customer message",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "sentiment": {"type": "string", "enum": ["positive", "negative", "neutral"]},
+            "confidence": {"type": "number", "description": "0.0 to 1.0"},
+            "topics": {"type": "array", "items": {"type": "string"}},
+            "action_required": {"type": "boolean"}
+        },
+        "required": ["sentiment", "confidence", "topics", "action_required"]
+    }
+}]
+# Consistent types, enforced schema, no parsing surprises`}</code></pre>
+    </>
+  }
+  explanation="Prose instructions produce inconsistent structured output. The tool_use API enforces schemas at the API level — types, required fields, and enums are guaranteed by the protocol, not by Claude's compliance with text instructions."
+/>
+
+<KeyTakeaway>
+- `tool_use` is the most reliable mechanism for structured extraction — define a JSON Schema and set `tool_choice: {"type": "any"}`
+- Tool input schemas support all JSON Schema primitives: `type`, `enum`, `required`, `description`, nested objects, arrays
+- Use `description` fields extensively — Claude reads them to understand how to populate each field
+- `enum` prevents Claude from inventing values for constrained fields
+- Direct JSON prompting (system prompt + `json.loads()`) is the fallback for streaming or simple schemas
+- Add an assistant prefill of `"{"` to prevent prose preamble before JSON
+- For production pipelines, always use `tool_use` — prose instructions produce inconsistent output over time
+</KeyTakeaway>

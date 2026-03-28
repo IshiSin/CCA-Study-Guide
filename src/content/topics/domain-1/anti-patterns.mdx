@@ -1,0 +1,264 @@
+---
+title: "Domain 1 Anti-Patterns"
+description: "The six most-tested architectural mistakes in agentic systems — learn what NOT to build."
+estimatedMinutes: 15
+domain: 1
+---
+
+Anti-patterns are the exam's favorite question type for Domain 1. The questions present a plausible-looking design and ask why it's wrong — or show two options and ask which is better. These six patterns cover the majority of Domain 1 anti-pattern questions.
+
+<Callout variant="warning" title="Read this before the exam">
+For each anti-pattern, internalize: (1) what it looks like, (2) what goes wrong, and (3) what the correct alternative is. The exam presents the wrong pattern as a reasonable choice.
+</Callout>
+
+---
+
+## Anti-Pattern 1 — Shared Mutable State Between Subagents
+
+<AntiPatternCard
+  title="Shared mutable state between subagents"
+  wrong={
+    <>
+      <p>A shared dictionary or list that multiple subagents read/write:</p>
+      <pre><code>{`shared_state = {"findings": [], "status": "running"}
+
+def subagent_a():
+    result = do_research()
+    shared_state["findings"].append(result)  # Mutates shared state
+
+def subagent_b():
+    # Reads shared_state["findings"] — but if this runs
+    # concurrently with A, the list may be partially populated
+    analyze(shared_state["findings"])
+
+# Run in parallel — race condition!
+asyncio.gather(subagent_a(), subagent_b())`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Coordinator owns all state; subagents are stateless functions:</p>
+      <pre><code>{`# Coordinator orchestrates explicitly
+findings_a = await subagent_a_task()        # Returns result
+findings_b = await subagent_b_task()        # Returns result
+
+# Coordinator owns aggregation
+all_findings = findings_a + findings_b      # Coordinator merges
+analysis = await analyze_task(all_findings) # Pass explicitly`}</code></pre>
+    </>
+  }
+  explanation="Subagents should be stateless functions: take explicit input, return explicit output. The coordinator is the single owner of shared state."
+/>
+
+---
+
+## Anti-Pattern 2 — Self-Reported Confidence for Escalation
+
+<AntiPatternCard
+  title="Trusting self-reported confidence scores for escalation decisions"
+  wrong={
+    <>
+      <p>Using the model's own confidence estimate to decide whether to escalate:</p>
+      <pre><code>{`response = client.messages.create(
+    system="After your answer, rate your confidence 1-10.",
+    messages=[...],
+)
+# Parse "Confidence: 7/10" from the response
+confidence = parse_confidence(response.content)
+
+if confidence < 5:
+    escalate_to_human()
+else:
+    proceed()  # ← Model said it's confident. But is it?`}</code></pre>
+      <p>Models are poorly calibrated — they often report high confidence when hallucinating.</p>
+    </>
+  }
+  right={
+    <>
+      <p>Use programmatic signals: tool failure counts, validation errors, output schema violations:</p>
+      <pre><code>{`# Programmatic escalation signals
+def should_escalate(result: dict, errors: list, iterations: int) -> bool:
+    return (
+        len(errors) >= 2                    # Multiple tool failures
+        or not validate_schema(result)      # Output fails validation
+        or iterations >= MAX_ITERATIONS     # Hit iteration ceiling
+        or result.get("missing_required_fields")
+    )`}</code></pre>
+    </>
+  }
+  explanation="Escalation decisions must be based on objective, measurable signals — not the model's self-assessment. This is a core instance of programmatic enforcement over prompt-based guidance."
+/>
+
+---
+
+## Anti-Pattern 3 — Using Batch API for Blocking Workflows
+
+<AntiPatternCard
+  title="Using the Message Batches API for real-time agent tasks"
+  wrong={
+    <>
+      <p>Submitting agentic work to the Batches API and waiting for results:</p>
+      <pre><code>{`# WRONG: Batch API is async — results return in hours, not seconds
+batch = client.beta.messages.batches.create(
+    requests=[{"custom_id": "step1", "params": {...}}]
+)
+# Block waiting for batch... this could take hours
+while batch.processing_status != "ended":
+    time.sleep(60)
+    batch = client.beta.messages.batches.retrieve(batch.id)
+result = get_batch_result(batch.id, "step1")`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Use synchronous Messages API for real-time workflows; Batches API for large-scale offline jobs:</p>
+      <pre><code>{`# RIGHT: Synchronous API for blocking/real-time agents
+response = client.messages.create(
+    model="claude-haiku-4-5",
+    max_tokens=1024,
+    messages=[...],
+)
+result = process(response)
+
+# Batch API is correct for: nightly processing, bulk classification,
+# generating 1000+ items where you can wait hours for results`}</code></pre>
+    </>
+  }
+  explanation="The Batches API provides 50% cost savings but returns results asynchronously (up to 24 hours). Use it for offline bulk processing, never for real-time agent pipelines."
+/>
+
+---
+
+## Anti-Pattern 4 — Larger Context Window = Better Attention
+
+<AntiPatternCard
+  title="Assuming filling the context window improves results"
+  wrong={
+    <>
+      <p>Dumping all available data into the context "to give the model more information":</p>
+      <pre><code>{`# WRONG: Paste entire 150k-token codebase into context
+messages = [{
+    "role": "user",
+    "content": entire_codebase_as_string  # 150k tokens
+    + "\n\nFind the bug in function calculate_total()"
+}]
+# Model's attention is diluted across irrelevant content`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Use retrieval or targeted extraction to provide relevant context only:</p>
+      <pre><code>{`# RIGHT: Extract only what's needed
+relevant_files = retrieve_relevant_files("calculate_total", top_k=5)
+focused_context = "\n".join(relevant_files)
+
+messages = [{
+    "role": "user",
+    "content": focused_context  # ~5k tokens of relevant content
+    + "\n\nFind the bug in function calculate_total()"
+}]
+# Model focuses on relevant code — better results, lower cost`}</code></pre>
+    </>
+  }
+  explanation="Context window size does not equal attention quality. Irrelevant content dilutes the model's focus on what matters. Use retrieval (RAG, grep, search) to provide targeted, high-signal context."
+/>
+
+---
+
+## Anti-Pattern 5 — Silent Failure on Subagent Error
+
+<AntiPatternCard
+  title="Swallowing subagent errors silently"
+  wrong={
+    <>
+      <p>Catching all exceptions and returning empty/fallback data without signaling failure:</p>
+      <pre><code>{`def run_subagent_safe(task: str) -> str:
+    try:
+        return run_subagent(task, {})
+    except Exception:
+        return ""  # ← SILENT FAILURE
+# Coordinator sees "" and proceeds as if task succeeded.
+# Final output is silently wrong or incomplete.`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Return structured errors; let coordinator decide whether to retry, degrade, or escalate:</p>
+      <pre><code>{`def run_subagent_safe(task: str) -> dict:
+    try:
+        result = run_subagent(task, {})
+        return {"success": True, "data": result}
+    except Exception as e:
+        return {
+            "success": False,
+            "error_code": classify_error(e),
+            "error_message": str(e)[:300],
+            "retryable": is_transient(e),
+        }
+# Coordinator can now make an informed recovery decision`}</code></pre>
+    </>
+  }
+  explanation="Silent failures compound in multi-agent systems — a failure in step 2 corrupts steps 3, 4, and 5, making the root cause invisible. Always surface structured errors."
+/>
+
+---
+
+## Anti-Pattern 6 — All Tools to All Agents
+
+<AntiPatternCard
+  title="Giving every agent access to every available tool"
+  wrong={
+    <>
+      <p>Registering all tools with every agent "for flexibility":</p>
+      <pre><code>{`ALL_TOOLS = [
+    search_web, read_file, write_file, delete_file,
+    send_email, query_database, execute_code,
+    call_payment_api, admin_reset_password,
+]
+
+# Every agent gets everything
+research_agent = Agent(tools=ALL_TOOLS)
+writing_agent = Agent(tools=ALL_TOOLS)
+review_agent = Agent(tools=ALL_TOOLS)
+# Risk: any agent can now delete files, execute code, or charge cards`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Apply principle of least privilege — each agent gets only what it needs:</p>
+      <pre><code>{`research_agent = Agent(tools=[search_web, read_file])
+writing_agent = Agent(tools=[read_file, write_file])
+review_agent = Agent(tools=[read_file])
+payment_agent = Agent(tools=[call_payment_api])  # Isolated
+
+# Result: a compromised research_agent cannot delete files or send emails`}</code></pre>
+    </>
+  }
+  explanation="Principle of least privilege reduces blast radius when an agent is misused, prompt-injected, or makes an error. Scope tools to exactly what each agent's task requires."
+/>
+
+---
+
+## Quick Reference
+
+| Anti-Pattern | The Mistake | The Fix |
+|---|---|---|
+| Shared mutable state | Subagents mutate shared dict/list | Coordinator owns all state; subagents are stateless |
+| Self-reported confidence | Model rates own confidence for escalation | Programmatic signals: tool failures, validation errors |
+| Batch API for blocking | Using async batches for real-time agent steps | Synchronous Messages API for real-time; Batches for offline bulk |
+| Fill context window | Dumping all data into context | Retrieve and inject only relevant content |
+| Silent failure | Swallow exceptions, return empty | Structured error with `error_code`, `retryable`, `message` |
+| All tools to all agents | Every agent gets every tool | Least privilege: scope tools per agent's task |
+
+<ExamTip>
+When you see an exam question presenting a multi-agent design, run through this checklist mentally: (1) Are subagents sharing state? (2) Is escalation based on model self-report? (3) Is Batch API used synchronously? (4) Is context being flooded? (5) Are errors silently swallowed? (6) Do agents have excess tool access? Any "yes" is likely a wrong answer.
+</ExamTip>
+
+<KeyTakeaway>
+- **Shared state**: Coordinator owns state; subagents are stateless pure functions
+- **Escalation**: Use programmatic signals (validation failures, error counts), not model confidence scores
+- **Batch API**: For offline bulk jobs only — never in blocking real-time workflows
+- **Context**: Retrieve relevant content; filling the window dilutes attention
+- **Errors**: Always structured with `error_code`, `retryable`, and actionable context
+- **Tool scope**: Least privilege — each agent gets only the tools its task requires
+</KeyTakeaway>

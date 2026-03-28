@@ -1,0 +1,330 @@
+---
+title: "MCP Clients"
+description: "Connecting to MCP servers from your agent — client setup, tool discovery, calling tools, and managing multiple server connections."
+estimatedMinutes: 20
+domain: 2
+---
+
+An **MCP client** is the component in your host application that connects to MCP servers, discovers their capabilities, and surfaces tool schemas to Claude. When you configure Claude Code with an MCP server, Claude Code is acting as the MCP client. When you build a custom agent, you wire up the MCP client yourself.
+
+## Connecting to a Stdio Server
+
+The most common client pattern: spawn a local server process and connect over stdio.
+
+```python
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+import asyncio
+
+async def connect_and_call():
+    # Define how to start the server process
+    server_params = StdioServerParameters(
+        command="python",
+        args=["path/to/my_server.py"],
+        env={"DATABASE_URL": "postgresql://localhost/mydb"}  # optional env vars
+    )
+
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            # 1. Initialize — performs the capability handshake
+            await session.initialize()
+
+            # 2. Discover available tools
+            tools_response = await session.list_tools()
+            print("Available tools:", [t.name for t in tools_response.tools])
+
+            # 3. Call a tool
+            result = await session.call_tool(
+                "search_issues",
+                arguments={"query": "authentication bug", "limit": 5}
+            )
+
+            # 4. Handle the result
+            for content in result.content:
+                if content.type == "text":
+                    print(content.text)
+```
+
+---
+
+## Converting MCP Tools for the Anthropic API
+
+When using MCP tools with `client.messages.create`, you must convert the MCP tool schemas to Anthropic API format:
+
+```python
+import anthropic
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def agent_with_mcp_tools(user_message: str):
+    client = anthropic.Anthropic()
+
+    server_params = StdioServerParameters(
+        command="python", args=["tools/github_server.py"]
+    )
+
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # Discover MCP tools
+            mcp_tools = (await session.list_tools()).tools
+
+            # Convert MCP tool schemas → Anthropic API tool format
+            anthropic_tools = [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "input_schema": tool.inputSchema,
+                }
+                for tool in mcp_tools
+            ]
+
+            # First Claude turn
+            messages = [{"role": "user", "content": user_message}]
+            response = client.messages.create(
+                model="claude-opus-4-5",
+                max_tokens=4096,
+                tools=anthropic_tools,
+                messages=messages,
+            )
+
+            # Agentic loop: handle tool calls
+            while response.stop_reason == "tool_use":
+                tool_results = []
+
+                for block in response.content:
+                    if block.type == "tool_use":
+                        # Execute tool via MCP session
+                        mcp_result = await session.call_tool(
+                            block.name,
+                            arguments=block.input
+                        )
+
+                        # Collect results
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": mcp_result.content[0].text
+                                        if mcp_result.content else "",
+                        })
+
+                # Continue the conversation
+                messages = [
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": response.content},
+                    {"role": "user", "content": tool_results},
+                ]
+                response = client.messages.create(
+                    model="claude-opus-4-5",
+                    max_tokens=4096,
+                    tools=anthropic_tools,
+                    messages=messages,
+                )
+
+            return response.content[0].text
+```
+
+<ExamTip>
+The exam tests this conversion step. MCP tool schemas use `inputSchema` (camelCase). The Anthropic API expects `input_schema` (snake_case). They're the same JSON Schema object, just referenced by different keys. Always rename the field when converting.
+</ExamTip>
+
+---
+
+## Connecting to an HTTP/SSE Server
+
+For remote servers deployed as web services:
+
+```python
+from mcp.client.sse import sse_client
+from mcp import ClientSession
+
+async def connect_to_remote_server():
+    # Connect to a remote MCP server via HTTP + SSE
+    async with sse_client("https://tools.example.com/mcp") as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # Same API as stdio — transport is transparent
+            tools = await session.list_tools()
+            result = await session.call_tool("run_analysis", {"dataset": "q4_sales"})
+```
+
+---
+
+## Managing Multiple MCP Servers
+
+Real agents often connect to several MCP servers simultaneously. Merge their tool lists, tracking which server provides each tool:
+
+```python
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from dataclasses import dataclass
+import asyncio
+
+@dataclass
+class ManagedTool:
+    name: str
+    description: str
+    input_schema: dict
+    session: ClientSession  # Which session handles this tool
+
+class MultiServerMCPClient:
+    def __init__(self):
+        self.tools: dict[str, ManagedTool] = {}
+        self._sessions: list[ClientSession] = []
+        self._contexts: list = []
+
+    async def add_server(self, server_params: StdioServerParameters):
+        ctx = stdio_client(server_params)
+        streams = await ctx.__aenter__()
+        self._contexts.append(ctx)
+
+        session = ClientSession(streams[0], streams[1])
+        await session.__aenter__()
+        await session.initialize()
+        self._sessions.append(session)
+
+        # Register all tools from this server
+        tool_list = await session.list_tools()
+        for tool in tool_list.tools:
+            if tool.name in self.tools:
+                # Handle name collision — prefix with server name
+                unique_name = f"{server_params.args[-1].split('/')[-1]}_{tool.name}"
+            else:
+                unique_name = tool.name
+
+            self.tools[unique_name] = ManagedTool(
+                name=unique_name,
+                description=tool.description or "",
+                input_schema=tool.inputSchema,
+                session=session,
+            )
+
+    def get_anthropic_tools(self) -> list[dict]:
+        """Convert all registered tools to Anthropic API format."""
+        return [
+            {
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.input_schema,
+            }
+            for t in self.tools.values()
+        ]
+
+    async def call_tool(self, tool_name: str, arguments: dict) -> str:
+        if tool_name not in self.tools:
+            raise ValueError(f"Unknown tool: {tool_name}")
+        managed = self.tools[tool_name]
+        result = await managed.session.call_tool(tool_name, arguments=arguments)
+        return result.content[0].text if result.content else ""
+
+    async def close(self):
+        for session in self._sessions:
+            await session.__aexit__(None, None, None)
+        for ctx in self._contexts:
+            await ctx.__aexit__(None, None, None)
+
+
+# Usage
+async def main():
+    mcp = MultiServerMCPClient()
+
+    await mcp.add_server(StdioServerParameters(
+        command="python", args=["servers/github_server.py"]
+    ))
+    await mcp.add_server(StdioServerParameters(
+        command="python", args=["servers/database_server.py"]
+    ))
+
+    tools = mcp.get_anthropic_tools()
+    print(f"Total tools available: {len(tools)}")
+
+    result = await mcp.call_tool("search_issues", {"query": "bug"})
+    await mcp.close()
+```
+
+<Callout variant="warning" title="Tool name collisions across servers">
+When two servers expose a tool with the same name, you must resolve the collision. Options: prefix with server name (`github_create_issue` vs `jira_create_issue`), pick one as authoritative, or raise an error at registration time. Always handle this explicitly — silent overwrites cause subtle bugs.
+</Callout>
+
+---
+
+## Reading Resources from a Client
+
+```python
+async def load_resource_into_context(session: ClientSession, uri: str) -> str:
+    """Fetch a resource and return its content for injection into Claude's context."""
+    resource = await session.read_resource(uri)
+    # Resources return a list of content items (text, blob, etc.)
+    for item in resource.contents:
+        if hasattr(item, "text"):
+            return item.text
+    return ""
+
+# Example: inject documentation into the system prompt
+async def agent_with_resource_context(user_question: str):
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # Load a resource to use as context
+            api_docs = await load_resource_into_context(
+                session, "docs://api-reference"
+            )
+
+            client = anthropic.Anthropic()
+            response = client.messages.create(
+                model="claude-opus-4-5",
+                max_tokens=4096,
+                system=f"You are a helpful assistant.\n\nAPI Reference:\n{api_docs}",
+                messages=[{"role": "user", "content": user_question}]
+            )
+            return response.content[0].text
+```
+
+<AntiPatternCard
+  title="Re-connecting to the server on every tool call"
+  wrong={
+    <>
+      <p>Opening a new client session for each tool invocation:</p>
+      <pre><code>{`async def call_github_tool(tool_name: str, args: dict) -> str:
+    # SLOW: spawns a new process + handshake on every call
+    async with stdio_client(server_params) as (r, w):
+        async with ClientSession(r, w) as session:
+            await session.initialize()  # handshake every time
+            result = await session.call_tool(tool_name, args)
+            return result.content[0].text`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Establish one session per agent run and reuse it for all calls:</p>
+      <pre><code>{`class Agent:
+    def __init__(self):
+        self.mcp_session: ClientSession | None = None
+
+    async def setup(self):
+        # Connect once at startup — reuse for all tool calls
+        self._ctx = stdio_client(server_params)
+        streams = await self._ctx.__aenter__()
+        self.mcp_session = ClientSession(streams[0], streams[1])
+        await self.mcp_session.__aenter__()
+        await self.mcp_session.initialize()
+
+    async def call_tool(self, name: str, args: dict) -> str:
+        result = await self.mcp_session.call_tool(name, args)
+        return result.content[0].text`}</code></pre>
+    </>
+  }
+  explanation="Each new stdio connection spawns a server process and performs a full capability handshake. Reconnecting per call adds hundreds of milliseconds per tool use and wastes resources."
+/>
+
+<KeyTakeaway>
+- MCP client connects to server, performs handshake, then calls `list_tools` to discover capabilities
+- Convert MCP tool schemas for the Anthropic API: rename `inputSchema` → `input_schema`
+- Stdio transport spawns a local process; SSE/HTTP connects to remote servers — same client API
+- Manage multiple servers by registering tools from each and tracking which session handles each tool
+- Handle tool name collisions explicitly when merging tools from multiple servers
+- Establish one session per agent run — don't reconnect per tool call
+</KeyTakeaway>

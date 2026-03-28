@@ -2,26 +2,148 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* VS Code Dark+ inspired */
+    --background: 240 6% 7%;        /* #0e0e10 near-black */
+    --foreground: 0 0% 83%;         /* #d4d4d4 VS Code default text */
+    --card: 240 5% 11%;             /* #1a1a1c editor bg */
+    --card-foreground: 0 0% 83%;
+    --popover: 240 5% 11%;
+    --popover-foreground: 0 0% 83%;
+    --primary: 187 70% 60%;         /* #4ec9b0 VS Code teal (class names) */
+    --primary-foreground: 240 6% 7%;
+    --secondary: 240 5% 16%;        /* #242426 sidebar/panel bg */
+    --secondary-foreground: 0 0% 83%;
+    --muted: 240 5% 16%;
+    --muted-foreground: 0 0% 50%;   /* #808080 VS Code line numbers */
+    --accent: 39 98% 56%;           /* #fca130 orange — warnings/exam tips */
+    --accent-foreground: 240 6% 7%;
+    --destructive: 0 72% 58%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 4% 20%;           /* #2d2d30 VS Code panel border */
+    --input: 240 5% 16%;
+    --ring: 187 70% 60%;
+    --radius: 0.35rem;              /* tighter, editor-like corners */
+  }
+
+  .light {
+    --background: 0 0% 97%;
+    --foreground: 240 6% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 6% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 6% 12%;
+    --primary: 187 60% 38%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 5% 93%;
+    --secondary-foreground: 240 6% 12%;
+    --muted: 240 5% 93%;
+    --muted-foreground: 240 4% 44%;
+    --accent: 39 98% 48%;
+    --accent-foreground: 240 6% 12%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5% 84%;
+    --input: 240 5% 84%;
+    --ring: 187 60% 38%;
   }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+/* Heading globals — JetBrains Mono display font, scaled hierarchy */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display), "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+/* Page h1 — matches TopicLayout "Agentic Loops" scale */
+main > div h1,
+section h1 {
+  font-size: clamp(2.75rem, 6vw, 3.75rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+/* Page h2 — section headings */
+main > div h2,
+section h2 {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Page h3 */
+main > div h3,
+section h3 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+::selection {
+  background: hsl(187 70% 60% / 0.25);
+  color: hsl(0 0% 95%);
+}
+
+/* Scrollbar styles */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground;
+}
+
+/* prose-custom: MDX table styles */
+.prose-custom table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.prose-custom thead {
+  background: hsl(var(--muted) / 0.3);
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+}
+.prose-custom th {
+  padding: 0.75rem 1.5rem;
+  text-align: left;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+.prose-custom td {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+  color: hsl(var(--muted-foreground));
+  vertical-align: middle;
+}
+.prose-custom tbody tr:last-child td {
+  border-bottom: none;
+}
+.prose-custom tbody tr:hover {
+  background: hsl(var(--muted) / 0.2);
+}
+.prose-custom tbody td:first-child {
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  color: hsl(var(--primary));
+  font-weight: 500;
 }
