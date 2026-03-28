@@ -1,7 +1,6 @@
 'use client'
 
 import { cn } from '@/lib/utils'
-import { Flag } from 'lucide-react'
 import type { QuizOption } from '@/lib/types'
 
 interface QuestionNavigatorProps {

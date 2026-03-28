@@ -242,14 +242,50 @@ def search_products(query: str) -> str:
 
 ## Common Description Failure Modes
 
-| Failure | Symptom | Fix |
-|---|---|---|
-| Missing "when to use" | Claude calls tool for unrelated queries | Add explicit trigger conditions |
-| Missing "do NOT use" | Claude uses wrong tool for overlapping queries | Add negative guidance |
-| No return description | Claude misinterprets the response | Document response schema |
-| Undocumented enums | Claude invents invalid enum values | List all valid values explicitly |
-| Missing format for IDs/dates | Claude passes wrong format | Show format and example |
-| No mention of required lookups | Claude passes names where IDs are required | State upstream dependencies |
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Description Failure Modes</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-purple-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Failure</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Symptom</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Missing "when to use"</td>
+        <td className="px-4 py-3 text-muted-foreground">Claude calls tool for unrelated queries</td>
+        <td className="px-4 py-3 text-muted-foreground">Add explicit trigger conditions</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Missing "do NOT use"</td>
+        <td className="px-4 py-3 text-muted-foreground">Claude uses wrong tool for overlapping queries</td>
+        <td className="px-4 py-3 text-muted-foreground">Add negative guidance</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">No return description</td>
+        <td className="px-4 py-3 text-muted-foreground">Claude misinterprets the response</td>
+        <td className="px-4 py-3 text-muted-foreground">Document response schema</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Undocumented enums</td>
+        <td className="px-4 py-3 text-muted-foreground">Claude invents invalid enum values</td>
+        <td className="px-4 py-3 text-muted-foreground">List all valid values explicitly</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Missing format for IDs/dates</td>
+        <td className="px-4 py-3 text-muted-foreground">Claude passes wrong format</td>
+        <td className="px-4 py-3 text-muted-foreground">Show format and example</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">No mention of required lookups</td>
+        <td className="px-4 py-3 text-muted-foreground">Claude passes names where IDs are required</td>
+        <td className="px-4 py-3 text-muted-foreground">State upstream dependencies</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 ---
 

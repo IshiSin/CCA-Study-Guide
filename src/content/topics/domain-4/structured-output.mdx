@@ -210,14 +210,50 @@ This prevents Claude from starting with "Sure! Here's the JSON:" and guarantees 
 
 ## Choosing: tool_use vs. Direct JSON Prompting
 
-| Factor | tool_use | Direct JSON Prompting |
-|---|---|---|
-| **Schema enforcement** | Strong — validated by API | Weak — prompt-only |
-| **Reliability** | High — Claude trained on tool calling | Lower — depends on prompt quality |
-| **Streaming support** | Limited | Full |
-| **Nesting complexity** | Handles deep nesting well | Gets unreliable beyond 2-3 levels |
-| **Multiple schemas** | Easy — define multiple tools | Hard — one schema per prompt |
-| **Token cost** | Tool schemas consume tokens | Schema in system prompt also consumes tokens |
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">tool_use vs. Direct JSON Prompting</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-emerald-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Factor</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">tool_use</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Direct JSON Prompting</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Schema enforcement</td>
+        <td className="px-4 py-3 text-muted-foreground">Strong — validated by API</td>
+        <td className="px-4 py-3 text-muted-foreground">Weak — prompt-only</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Reliability</td>
+        <td className="px-4 py-3 text-muted-foreground">High — Claude trained on tool calling</td>
+        <td className="px-4 py-3 text-muted-foreground">Lower — depends on prompt quality</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Streaming support</td>
+        <td className="px-4 py-3 text-muted-foreground">Limited</td>
+        <td className="px-4 py-3 text-muted-foreground">Full</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Nesting complexity</td>
+        <td className="px-4 py-3 text-muted-foreground">Handles deep nesting well</td>
+        <td className="px-4 py-3 text-muted-foreground">Gets unreliable beyond 2-3 levels</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Multiple schemas</td>
+        <td className="px-4 py-3 text-muted-foreground">Easy — define multiple tools</td>
+        <td className="px-4 py-3 text-muted-foreground">Hard — one schema per prompt</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Token cost</td>
+        <td className="px-4 py-3 text-muted-foreground">Tool schemas consume tokens</td>
+        <td className="px-4 py-3 text-muted-foreground">Schema in system prompt also consumes tokens</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 Use `tool_use` for production extraction pipelines. Use direct JSON prompting for:
 - Streaming responses

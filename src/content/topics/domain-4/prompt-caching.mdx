@@ -81,12 +81,35 @@ Always structure analysis as:
 
 ## Cache TTL and Invalidation
 
-| Property | Value |
-|---|---|
-| Cache TTL | 5 minutes (refreshed on each hit) |
-| Cache scope | Per API key, per model |
-| Invalidation | Automatic on TTL expiry or when the cached prefix changes |
-| Min tokens for caching | 1,024 tokens (shorter content is not cached) |
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Cache Properties</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-emerald-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Property</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Value</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Cache TTL</td>
+        <td className="px-4 py-3 text-muted-foreground">5 minutes (refreshed on each hit)</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Cache scope</td>
+        <td className="px-4 py-3 text-muted-foreground">Per API key, per model</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Invalidation</td>
+        <td className="px-4 py-3 text-muted-foreground">Automatic on TTL expiry or when the cached prefix changes</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Min tokens for caching</td>
+        <td className="px-4 py-3 text-muted-foreground">1,024 tokens (shorter content is not cached)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 The 5-minute TTL refreshes on each cache hit. For applications with continuous traffic, the cache stays warm indefinitely. For bursty or low-frequency traffic, cache misses will occur between sessions.
 
@@ -107,13 +130,39 @@ Cache content that is:
 - **Stable** — content that changes per request cannot be cached (it causes a cache miss)
 - **Reused** — cached content must be identical across requests
 
-| Cache this | Don't cache this |
-|---|---|
-| System prompt | Per-user instructions |
-| Reference documentation | Dynamic user data |
-| Tool definitions | The user's query |
-| Few-shot examples | Conversation history |
-| Large context documents | Per-request metadata |
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">What to Cache</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-emerald-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Cache this</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Don't cache this</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">System prompt</td>
+        <td className="px-4 py-3 text-muted-foreground">Per-user instructions</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Reference documentation</td>
+        <td className="px-4 py-3 text-muted-foreground">Dynamic user data</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Tool definitions</td>
+        <td className="px-4 py-3 text-muted-foreground">The user's query</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Few-shot examples</td>
+        <td className="px-4 py-3 text-muted-foreground">Conversation history</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Large context documents</td>
+        <td className="px-4 py-3 text-muted-foreground">Per-request metadata</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 ---
 

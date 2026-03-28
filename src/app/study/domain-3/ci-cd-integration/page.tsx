@@ -1,4 +1,3 @@
-export const dynamic = "force-dynamic"
 
 import { compileMDX } from "next-mdx-remote/rsc"
 import remarkGfm from "remark-gfm"

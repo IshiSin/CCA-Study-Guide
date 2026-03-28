@@ -241,14 +241,50 @@ payment_agent = Agent(tools=[call_payment_api])  # Isolated
 
 ## Quick Reference
 
-| Anti-Pattern | The Mistake | The Fix |
-|---|---|---|
-| Shared mutable state | Subagents mutate shared dict/list | Coordinator owns all state; subagents are stateless |
-| Self-reported confidence | Model rates own confidence for escalation | Programmatic signals: tool failures, validation errors |
-| Batch API for blocking | Using async batches for real-time agent steps | Synchronous Messages API for real-time; Batches for offline bulk |
-| Fill context window | Dumping all data into context | Retrieve and inject only relevant content |
-| Silent failure | Swallow exceptions, return empty | Structured error with `error_code`, `retryable`, `message` |
-| All tools to all agents | Every agent gets every tool | Least privilege: scope tools per agent's task |
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Anti-Pattern Quick Reference</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-blue-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Anti-Pattern</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">The Mistake</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">The Fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Shared mutable state</td>
+        <td className="px-4 py-3 text-muted-foreground">Subagents mutate shared dict/list</td>
+        <td className="px-4 py-3 text-muted-foreground">Coordinator owns all state; subagents are stateless</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Self-reported confidence</td>
+        <td className="px-4 py-3 text-muted-foreground">Model rates own confidence for escalation</td>
+        <td className="px-4 py-3 text-muted-foreground">Programmatic signals: tool failures, validation errors</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Batch API for blocking</td>
+        <td className="px-4 py-3 text-muted-foreground">Using async batches for real-time agent steps</td>
+        <td className="px-4 py-3 text-muted-foreground">Synchronous Messages API for real-time; Batches for offline bulk</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Fill context window</td>
+        <td className="px-4 py-3 text-muted-foreground">Dumping all data into context</td>
+        <td className="px-4 py-3 text-muted-foreground">Retrieve and inject only relevant content</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Silent failure</td>
+        <td className="px-4 py-3 text-muted-foreground">Swallow exceptions, return empty</td>
+        <td className="px-4 py-3 text-muted-foreground">Structured error with <code className="font-mono text-xs bg-muted px-1 rounded">error_code</code>, <code className="font-mono text-xs bg-muted px-1 rounded">retryable</code>, <code className="font-mono text-xs bg-muted px-1 rounded">message</code></td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">All tools to all agents</td>
+        <td className="px-4 py-3 text-muted-foreground">Every agent gets every tool</td>
+        <td className="px-4 py-3 text-muted-foreground">Least privilege: scope tools per agent's task</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 <ExamTip>
 When you see an exam question presenting a multi-agent design, run through this checklist mentally: (1) Are subagents sharing state? (2) Is escalation based on model self-report? (3) Is Batch API used synchronously? (4) Is context being flooded? (5) Are errors silently swallowed? (6) Do agents have excess tool access? Any "yes" is likely a wrong answer.

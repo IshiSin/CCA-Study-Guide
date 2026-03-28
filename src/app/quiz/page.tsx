@@ -10,7 +10,7 @@ export default function QuizPage() {
     <div className="p-6 max-w-5xl mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold mb-2">Practice Quizzes</h1>
-        <p className="text-muted-foreground font-mono text-sm">// Test by domain or run the full mock exam</p>
+        <p className="text-muted-foreground font-mono text-sm">{`// Test by domain or run the full mock exam`}</p>
       </div>
 
       {/* Mock Exam CTA */}
@@ -38,7 +38,7 @@ export default function QuizPage() {
       </TerminalCard>
 
       {/* Domain Quizzes */}
-      <h2 className="text-xl font-semibold mb-4 font-mono">// Domain Quizzes</h2>
+      <h2 className="text-xl font-semibold mb-4 font-mono">{`// Domain Quizzes`}</h2>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {domains.map((domain) => {
           const colors = domainColorMap[domain.color]

@@ -128,14 +128,50 @@ def hierarchical_agent(enterprise_goal: str) -> str:
 
 Not every task benefits from decomposition. Decomposition adds coordination overhead — subagent spawning, context packaging, result parsing.
 
-| Factor | Keep Monolithic | Decompose |
-|---|---|---|
-| **Task complexity** | Single-focus, ≤ 2 tool types | Multi-domain, 3+ distinct capabilities |
-| **Context sharing** | Subtasks heavily interdependent | Subtasks mostly independent |
-| **Latency** | Sequential is fine | Parallelism would reduce time |
-| **Error recovery** | Fail-fast is acceptable | Subtasks can be retried independently |
-| **Token budget** | Fits in one context window | Would exhaust single context |
-| **Model cost** | Uniform capability needed | Subtasks have different complexity |
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Monolithic vs. Decomposed</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-blue-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Factor</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Keep Monolithic</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Decompose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Task complexity</td>
+        <td className="px-4 py-3 text-muted-foreground">Single-focus, ≤ 2 tool types</td>
+        <td className="px-4 py-3 text-muted-foreground">Multi-domain, 3+ distinct capabilities</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Context sharing</td>
+        <td className="px-4 py-3 text-muted-foreground">Subtasks heavily interdependent</td>
+        <td className="px-4 py-3 text-muted-foreground">Subtasks mostly independent</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Latency</td>
+        <td className="px-4 py-3 text-muted-foreground">Sequential is fine</td>
+        <td className="px-4 py-3 text-muted-foreground">Parallelism would reduce time</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Error recovery</td>
+        <td className="px-4 py-3 text-muted-foreground">Fail-fast is acceptable</td>
+        <td className="px-4 py-3 text-muted-foreground">Subtasks can be retried independently</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Token budget</td>
+        <td className="px-4 py-3 text-muted-foreground">Fits in one context window</td>
+        <td className="px-4 py-3 text-muted-foreground">Would exhaust single context</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Model cost</td>
+        <td className="px-4 py-3 text-muted-foreground">Uniform capability needed</td>
+        <td className="px-4 py-3 text-muted-foreground">Subtasks have different complexity</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 <ExamTip>
 The exam frequently presents a scenario and asks "should this be a single agent or multiple agents?" The correct answer hinges on: (1) whether subtasks are truly independent, (2) whether the total token requirement would exceed a single context window, and (3) whether different subtasks need different model tiers.

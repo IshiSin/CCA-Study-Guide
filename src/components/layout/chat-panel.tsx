@@ -71,7 +71,7 @@ export function ChatPanel() {
             <div className="text-center text-muted-foreground text-xs font-mono py-12 space-y-2">
               <Bot className="h-8 w-8 mx-auto mb-3 opacity-40" />
               <p>Ask anything about the CCA exam.</p>
-              <p className="opacity-60">e.g. "What is hub-and-spoke?" or "How does MCP work?"</p>
+              <p className="opacity-60">e.g. &ldquo;What is hub-and-spoke?&rdquo; or &ldquo;How does MCP work?&rdquo;</p>
             </div>
           )}
 
@@ -79,7 +79,7 @@ export function ChatPanel() {
             const text = msg.parts
               ?.filter((p) => p.type === "text")
               .map((p) => p.type === "text" ? p.text : "")
-              .join("") ?? (typeof msg.content === "string" ? msg.content : "")
+              .join("") ?? ""
             return (
               <div
                 key={msg.id}

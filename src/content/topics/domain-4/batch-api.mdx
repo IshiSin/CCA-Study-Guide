@@ -9,14 +9,50 @@ The **Message Batches API** lets you submit up to 10,000 requests in a single ba
 
 ## When to Use the Batch API
 
-| Use Case | Batch API? | Reason |
-|---|---|---|
-| Classifying 50,000 customer messages | Yes | High volume, no real-time requirement |
-| Real-time chatbot responses | No | Latency matters — users are waiting |
-| Nightly document processing pipeline | Yes | Async is fine, volume is large |
-| PR review that posts a comment | No | User is waiting for the comment |
-| Generating embeddings for a product catalog | Yes | Batch job, not user-facing |
-| Sentiment analysis on a data export | Yes | Offline processing, large dataset |
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">When to Use the Batch API</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-emerald-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Use Case</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Batch API?</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Classifying 50,000 customer messages</td>
+        <td className="px-4 py-3 text-muted-foreground">Yes</td>
+        <td className="px-4 py-3 text-muted-foreground">High volume, no real-time requirement</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Real-time chatbot responses</td>
+        <td className="px-4 py-3 text-muted-foreground">No</td>
+        <td className="px-4 py-3 text-muted-foreground">Latency matters — users are waiting</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Nightly document processing pipeline</td>
+        <td className="px-4 py-3 text-muted-foreground">Yes</td>
+        <td className="px-4 py-3 text-muted-foreground">Async is fine, volume is large</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">PR review that posts a comment</td>
+        <td className="px-4 py-3 text-muted-foreground">No</td>
+        <td className="px-4 py-3 text-muted-foreground">User is waiting for the comment</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Generating embeddings for a product catalog</td>
+        <td className="px-4 py-3 text-muted-foreground">Yes</td>
+        <td className="px-4 py-3 text-muted-foreground">Batch job, not user-facing</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Sentiment analysis on a data export</td>
+        <td className="px-4 py-3 text-muted-foreground">Yes</td>
+        <td className="px-4 py-3 text-muted-foreground">Offline processing, large dataset</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 <ExamTip>
 The exam tests the core tradeoff: Batch API gives you ~50% cost reduction and higher throughput at the cost of latency (minutes to hours, not milliseconds). If the user is waiting for a response, use the synchronous API. If you're processing data offline, use Batch.
@@ -64,12 +100,35 @@ print(f"Status: {batch.processing_status}")  # "in_progress"
 
 ### Batch Limits
 
-| Limit | Value |
-|---|---|
-| Max requests per batch | 10,000 |
-| Max batch size | 32 MB |
-| Batch expiry (if not retrieved) | 29 days |
-| Cost reduction vs. synchronous | ~50% |
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Batch API Limits</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-emerald-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Limit</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Value</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Max requests per batch</td>
+        <td className="px-4 py-3 text-muted-foreground">10,000</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Max batch size</td>
+        <td className="px-4 py-3 text-muted-foreground">32 MB</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Batch expiry (if not retrieved)</td>
+        <td className="px-4 py-3 text-muted-foreground">29 days</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Cost reduction vs. synchronous</td>
+        <td className="px-4 py-3 text-muted-foreground">~50%</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 ---
 
@@ -134,11 +193,35 @@ def process_batch_results(batch_id: str) -> dict[str, str]:
 
 ### Result Types
 
-| Result Type | Meaning | Action |
-|---|---|---|
-| `succeeded` | Request completed successfully | Extract from `result.message` |
-| `errored` | API error (invalid request, content policy, etc.) | Log error, consider retry |
-| `expired` | Request didn't complete before batch timeout | Retry in a new batch |
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Result Types</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-emerald-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Result Type</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Meaning</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium"><code className="font-mono text-xs bg-muted px-1 rounded">succeeded</code></td>
+        <td className="px-4 py-3 text-muted-foreground">Request completed successfully</td>
+        <td className="px-4 py-3 text-muted-foreground">Extract from <code className="font-mono text-xs bg-muted px-1 rounded">result.message</code></td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium"><code className="font-mono text-xs bg-muted px-1 rounded">errored</code></td>
+        <td className="px-4 py-3 text-muted-foreground">API error (invalid request, content policy, etc.)</td>
+        <td className="px-4 py-3 text-muted-foreground">Log error, consider retry</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium"><code className="font-mono text-xs bg-muted px-1 rounded">expired</code></td>
+        <td className="px-4 py-3 text-muted-foreground">Request didn't complete before batch timeout</td>
+        <td className="px-4 py-3 text-muted-foreground">Retry in a new batch</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 ---
 

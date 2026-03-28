@@ -48,7 +48,7 @@ export default function HomePage() {
           <div className="flex items-center justify-between mb-8">
             <div>
               <h2 className="text-2xl font-bold">Exam Domains</h2>
-              <p className="text-muted-foreground mt-1 font-mono text-sm">// 5 domains · full CCA coverage</p>
+              <p className="text-muted-foreground mt-1 font-mono text-sm">{`// 5 domains · full CCA coverage`}</p>
             </div>
           </div>
 

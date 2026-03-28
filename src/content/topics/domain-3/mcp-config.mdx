@@ -79,12 +79,40 @@ The exam focuses on the distinction between **project-level** (`.mcp.json` in th
 
 The top-level key is always `"mcpServers"`. Each value is a server definition with:
 
-| Field | Required | Description |
-|---|---|---|
-| `command` | Yes | The executable to run (launches the MCP server process) |
-| `args` | No | Command-line arguments passed to the command |
-| `env` | No | Environment variables for the server process |
-| `cwd` | No | Working directory for the server process |
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Stdio Config Fields</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-orange-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Field</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Required</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium"><code className="font-mono text-xs bg-muted px-1 rounded">command</code></td>
+        <td className="px-4 py-3 text-muted-foreground">Yes</td>
+        <td className="px-4 py-3 text-muted-foreground">The executable to run (launches the MCP server process)</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium"><code className="font-mono text-xs bg-muted px-1 rounded">args</code></td>
+        <td className="px-4 py-3 text-muted-foreground">No</td>
+        <td className="px-4 py-3 text-muted-foreground">Command-line arguments passed to the command</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium"><code className="font-mono text-xs bg-muted px-1 rounded">env</code></td>
+        <td className="px-4 py-3 text-muted-foreground">No</td>
+        <td className="px-4 py-3 text-muted-foreground">Environment variables for the server process</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium"><code className="font-mono text-xs bg-muted px-1 rounded">cwd</code></td>
+        <td className="px-4 py-3 text-muted-foreground">No</td>
+        <td className="px-4 py-3 text-muted-foreground">Working directory for the server process</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 ---
 

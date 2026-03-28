@@ -9,13 +9,45 @@ domain: 3
 
 ## Skills vs. Slash Commands
 
-| | Slash Commands | Skills |
-|---|---|---|
-| **Invocation** | Always manual (`/command-name`) | Manual OR automatic via trigger |
-| **File location** | `.claude/commands/` | `.claude/commands/` (same directory) |
-| **Structure** | Free-form Markdown prompt | Structured with metadata sections |
-| **Identity** | Claude stays as Claude | Can adopt a specialized persona/role |
-| **Discovery** | Listed in `/` menu | Listed in `/` menu + can auto-trigger |
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Slash Commands vs. Skills</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-orange-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground"></th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Slash Commands</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Skills</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Invocation</td>
+        <td className="px-4 py-3 text-muted-foreground">Always manual (<code className="font-mono text-xs bg-muted px-1 rounded">/command-name</code>)</td>
+        <td className="px-4 py-3 text-muted-foreground">Manual OR automatic via trigger</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">File location</td>
+        <td className="px-4 py-3 text-muted-foreground"><code className="font-mono text-xs bg-muted px-1 rounded">.claude/commands/</code></td>
+        <td className="px-4 py-3 text-muted-foreground"><code className="font-mono text-xs bg-muted px-1 rounded">.claude/commands/</code> (same directory)</td>
+      </tr>
+      <tr className="border-b border-border hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Structure</td>
+        <td className="px-4 py-3 text-muted-foreground">Free-form Markdown prompt</td>
+        <td className="px-4 py-3 text-muted-foreground">Structured with metadata sections</td>
+      </tr>
+      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Identity</td>
+        <td className="px-4 py-3 text-muted-foreground">Claude stays as Claude</td>
+        <td className="px-4 py-3 text-muted-foreground">Can adopt a specialized persona/role</td>
+      </tr>
+      <tr className="hover:bg-muted/20">
+        <td className="px-4 py-3 text-muted-foreground font-medium">Discovery</td>
+        <td className="px-4 py-3 text-muted-foreground">Listed in <code className="font-mono text-xs bg-muted px-1 rounded">/</code> menu</td>
+        <td className="px-4 py-3 text-muted-foreground">Listed in <code className="font-mono text-xs bg-muted px-1 rounded">/</code> menu + can auto-trigger</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 <ExamTip>
 The exam may test the terminology distinction: "slash commands" and "skills" both live in `.claude/commands/` as `.md` files. The difference is that skills include structured metadata — especially trigger conditions — that makes them smarter about when they activate. A skill is a slash command with extra structure.

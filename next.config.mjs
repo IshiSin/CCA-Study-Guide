@@ -9,6 +9,10 @@ const withMDX = createMDX({
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'export',
+  basePath: '/CCA-Study-Guide',
+  assetPrefix: '/CCA-Study-Guide',
+  images: { unoptimized: true },
   experimental: {
     serverComponentsExternalPackages: ['shiki'],
   },
