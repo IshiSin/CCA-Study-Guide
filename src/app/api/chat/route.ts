@@ -19,5 +19,5 @@ Keep answers concise and exam-focused. Reference the five exam domains when rele
     messages,
   })
 
-  return result.toDataStreamResponse()
+  return result.toTextStreamResponse()
 }
