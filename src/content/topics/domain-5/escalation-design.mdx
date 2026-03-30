@@ -5,11 +5,11 @@ estimatedMinutes: 20
 domain: 5
 ---
 
-**Escalation** is the decision to stop autonomous execution and hand a situation to a human (or a higher-authority system). Well-designed escalation is what separates a trustworthy agent from one that either does too much unsupervised or annoys users by asking permission for everything.
+`Escalation` is the decision to stop autonomous execution and hand a situation to a human (or a higher-authority system). Well-designed escalation is what separates a trustworthy agent from one that either does too much unsupervised or annoys users by asking permission for everything.
 
 ## The Escalation Decision
 
-Every escalation trigger answers one question: **is this decision within the agent's sanctioned authority?**
+Every escalation trigger answers one question: `is this decision within the agent's sanctioned authority?`
 
 Agents have implicit or explicit authority bounds. When a situation falls outside those bounds — because of irreversibility, ambiguity, risk, or explicit policy — the correct action is to escalate rather than proceed.
 
@@ -29,7 +29,7 @@ What makes something outside authority?
 ```
 
 <ExamTip>
-The exam tests the distinction between escalation as a **safety mechanism** vs. escalation as a **failure mode**. Good escalation surfaces the right decisions at the right time. Bad escalation either never escalates (agent acts unilaterally on things it shouldn't) or always escalates (agent is useless without constant human input). The goal is calibrated escalation: autonomous for routine, escalated for exceptional.
+The exam tests the distinction between escalation as a `safety mechanism` vs. escalation as a `failure mode`. Good escalation surfaces the right decisions at the right time. Bad escalation either never escalates (agent acts unilaterally on things it shouldn't) or always escalates (agent is useless without constant human input). The goal is calibrated escalation: autonomous for routine, escalated for exceptional.
 </ExamTip>
 
 ---
@@ -156,7 +156,7 @@ def check_policy_triggers(action: dict) -> bool:
 
 ## Escalation Paths
 
-When the agent decides to escalate, it needs to know **who** to escalate to and **how**:
+When the agent decides to escalate, it needs to know `who` to escalate to and `how`:
 
 ```python
 from dataclasses import dataclass
@@ -212,7 +212,7 @@ def escalate(request: EscalationRequest) -> str:
 
 ## Escalation Message Design
 
-A good escalation message surfaces **the decision**, not just the problem. The human should be able to act immediately:
+A good escalation message surfaces `the decision`, not just the problem. The human should be able to act immediately:
 
 ```python
 # BAD escalation message:

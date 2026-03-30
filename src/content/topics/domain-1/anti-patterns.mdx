@@ -291,10 +291,10 @@ When you see an exam question presenting a multi-agent design, run through this 
 </ExamTip>
 
 <KeyTakeaway>
-- **Shared state**: Coordinator owns state; subagents are stateless pure functions
-- **Escalation**: Use programmatic signals (validation failures, error counts), not model confidence scores
-- **Batch API**: For offline bulk jobs only — never in blocking real-time workflows
-- **Context**: Retrieve relevant content; filling the window dilutes attention
-- **Errors**: Always structured with `error_code`, `retryable`, and actionable context
-- **Tool scope**: Least privilege — each agent gets only the tools its task requires
+- `Shared state`: Coordinator owns state; subagents are stateless pure functions
+- `Escalation`: Use programmatic signals (validation failures, error counts), not model confidence scores
+- `Batch API`: For offline bulk jobs only — never in blocking real-time workflows
+- `Context`: Retrieve relevant content; filling the window dilutes attention
+- `Errors`: Always structured with `error_code`, `retryable`, and actionable context
+- `Tool scope`: Least privilege — each agent gets only the tools its task requires
 </KeyTakeaway>

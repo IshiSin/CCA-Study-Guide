@@ -5,7 +5,7 @@ estimatedMinutes: 20
 domain: 5
 ---
 
-**Human-in-the-loop (HITL)** is the design principle that humans remain involved in agentic workflows at appropriate decision points — not constantly, not never, but where it matters. HITL is not a limitation of agent capability; it is a deliberate architectural choice that makes agents safe to deploy on high-stakes tasks.
+`Human-in-the-loop (HITL)` is the design principle that humans remain involved in agentic workflows at appropriate decision points — not constantly, not never, but where it matters. HITL is not a limitation of agent capability; it is a deliberate architectural choice that makes agents safe to deploy on high-stakes tasks.
 
 ## The HITL Spectrum
 
@@ -42,14 +42,14 @@ Agent autonomy exists on a spectrum. The right position depends on task risk, re
 </div>
 
 <ExamTip>
-The exam tests the **human-in-the-loop vs. human-on-the-loop** distinction. HITL = human approves before action. Human-on-the-loop = human monitors and can intervene, but actions proceed unless interrupted. Both are valid patterns; the choice depends on risk level.
+The exam tests the `human-in-the-loop vs. human-on-the-loop` distinction. HITL = human approves before action. Human-on-the-loop = human monitors and can intervene, but actions proceed unless interrupted. Both are valid patterns; the choice depends on risk level.
 </ExamTip>
 
 ---
 
 ## Approval Gates
 
-An **approval gate** is a synchronous pause in agent execution where the agent presents a plan and waits for explicit human sign-off before continuing.
+An `approval gate` is a synchronous pause in agent execution where the agent presents a plan and waits for explicit human sign-off before continuing.
 
 ```python
 from typing import Callable
@@ -104,18 +104,18 @@ def auto_approve_if_safe(plan: dict) -> bool:
 
 ## Interrupt Points
 
-An **interrupt point** is a location in execution where the agent proactively pauses to check in, even if no error has occurred. Well-designed agents place interrupt points before:
+An `interrupt point` is a location in execution where the agent proactively pauses to check in, even if no error has occurred. Well-designed agents place interrupt points before:
 
-1. **Destructive operations** — deletes, drops, overwrites
-2. **External communications** — sending emails, posting to APIs, webhooks
-3. **Scope expansion** — when the task turns out larger than originally described
-4. **Unexpected findings** — the agent discovers something surprising mid-task
+1. `Destructive operations` — deletes, drops, overwrites
+2. `External communications` — sending emails, posting to APIs, webhooks
+3. `Scope expansion` — when the task turns out larger than originally described
+4. `Unexpected findings` — the agent discovers something surprising mid-task
 
-**Scope expansion example:** User asks an agent to "clean up unused imports in `auth.py`." Mid-task the agent discovers that removing those imports requires changes in 14 other files. Rather than silently making 15-file edits, a well-designed agent pauses:
+`Scope expansion example:` User asks an agent to "clean up unused imports in `auth.py`." Mid-task the agent discovers that removing those imports requires changes in 14 other files. Rather than silently making 15-file edits, a well-designed agent pauses:
 
 > *"Removing unused imports from `auth.py` requires changes in 14 additional files (`middleware.py`, `routes/*.py`, etc.). Do you want me to proceed with all 15 files, or limit changes to `auth.py` only?"*
 
-**Unexpected findings example:** A data migration agent, while moving records to the new schema, finds 3,200 rows with `null` values in a field that should be required. Instead of silently skipping or inserting empty strings, it pauses:
+`Unexpected findings example:` A data migration agent, while moving records to the new schema, finds 3,200 rows with `null` values in a field that should be required. Instead of silently skipping or inserting empty strings, it pauses:
 
 > *"Found 3,200 rows with null `user_id`. Migration cannot proceed safely without knowing the correct handling: skip these rows, assign a placeholder, or abort? Current progress: 8,000 / 45,000 rows migrated."*
 
@@ -222,7 +222,7 @@ scope_request = ConfirmationRequest(
 
 ## Async HITL: Human-on-the-Loop
 
-For workflows where the human can't be present synchronously, design for **async review**:
+For workflows where the human can't be present synchronously, design for `async review`:
 
 ```python
 import asyncio
@@ -325,7 +325,7 @@ workflow = [
 - Human-in-the-loop = approve before action; human-on-the-loop = monitor and can interrupt
 - Approval gates: agent plans (read-only), human approves, agent executes
 - Interrupt points: agent pauses proactively before destructive or unexpected actions
-- Confirmation requests must surface **the decision**, not just the problem — give options with consequences
+- Confirmation requests must surface `the decision`, not just the problem — give options with consequences
 - Async HITL: queue actions with a review window so humans can cancel before execution
 - Design HITL checkpoints into workflow architecture from the start — not as an afterthought
 </KeyTakeaway>

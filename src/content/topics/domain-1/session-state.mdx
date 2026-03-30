@@ -9,78 +9,44 @@ Agents are inherently stateful — they reason over a growing conversation histo
 
 ## State Lives in the Message History
 
-Claude has no built-in memory. **All state is the message array you pass on each turn.** To maintain state across turns, you own the conversation history.
+Claude has no built-in memory. `All state is the message array you pass on each turn.` To maintain state across turns, you own the conversation history.
 
 ```python
-import anthropic
 from dataclasses import dataclass, field
+import anthropic
 
 client = anthropic.Anthropic()
 
 @dataclass
 class AgentSession:
-    """Manages conversation state for a single agent session."""
     session_id: str
     system: str
-    messages: list[dict] = field(default_factory=list)
-    metadata: dict = field(default_factory=dict)
+    messages: list[dict] = field(default_factory=list)  # this IS the state
 
     def add_user_message(self, content: str):
+        # every user turn — including tool results — gets appended here
         self.messages.append({"role": "user", "content": content})
 
-    def add_assistant_message(self, content):
-        self.messages.append({"role": "assistant", "content": content})
-
     def add_tool_result(self, tool_use_id: str, result: str):
+        # tool results are wrapped in a special "tool_result" block, not plain text
         self.messages.append({
             "role": "user",
-            "content": [{
-                "type": "tool_result",
-                "tool_use_id": tool_use_id,
-                "content": result,
-            }]
+            "content": [{"type": "tool_result", "tool_use_id": tool_use_id, "content": result}]
         })
 
-    def token_estimate(self) -> int:
-        """Rough estimate: 4 chars ≈ 1 token."""
-        total_chars = sum(
-            len(str(m.get("content", ""))) for m in self.messages
-        )
-        return total_chars // 4
-
 def run_turn(session: AgentSession, user_input: str) -> str:
-    """Execute one turn in the session, updating state in place."""
     session.add_user_message(user_input)
 
-    while True:
-        response = client.messages.create(
-            model="claude-opus-4-5",
-            max_tokens=2048,
-            system=session.system,
-            messages=session.messages,
-            tools=[],
-        )
+    response = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=2048,
+        system=session.system,
+        messages=session.messages,  # pass the full history every time
+    )
 
-        session.add_assistant_message(response.content)
-
-        if response.stop_reason == "end_turn":
-            # Extract text and return
-            return next(
-                block.text for block in response.content
-                if hasattr(block, "text")
-            )
-
-        # Handle tool calls
-        tool_results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                result = execute_tool(block.name, block.input)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
-        session.messages.append({"role": "user", "content": tool_results})
+    # append Claude's response so the next turn has context of what it just said
+    session.messages.append({"role": "assistant", "content": response.content})
+    return next(b.text for b in response.content if hasattr(b, "text"))
 ```
 
 ---
@@ -128,7 +94,7 @@ async def parallel_with_forks(coordinator_session: AgentSession, tasks: list[str
 ```
 
 <ExamTip>
-The exam tests **context forking** vs. **shared context**. When spawning parallel agents, you must fork — not share — the context. Sharing a mutable message list between concurrent agents causes race conditions and corrupted state.
+The exam tests `context forking` vs. `shared context`. When spawning parallel agents, you must fork — not share — the context. Sharing a mutable message list between concurrent agents causes race conditions and corrupted state.
 </ExamTip>
 
 ---

@@ -32,7 +32,7 @@ export default async function AgenticLoopsPage() {
         { label: "Domain 1", href: "/study/domain-1" },
         { label: mdx.frontmatter.title },
       ]}
-      prev={{ title: "Domain 1 Overview", href: "/study/domain-1" }}
+      prev={{ title: "Claude Agent SDK", href: "/study/domain-1/agent-sdk" }}
       next={{ title: "Hub-and-Spoke Orchestration", href: "/study/domain-1/hub-and-spoke" }}
     >
       {content}

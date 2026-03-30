@@ -5,7 +5,7 @@ estimatedMinutes: 15
 domain: 2
 ---
 
-**Tool scoping** is the practice of giving an agent access only to the tools it needs for the current task — no more. It is the AI equivalent of the principle of least privilege in security engineering. Over-scoped tool access is one of the most common and consequential mistakes in agentic system design.
+`Tool scoping` is the practice of giving an agent access only to the tools it needs for the current task — no more. It is the AI equivalent of the principle of least privilege in security engineering. Over-scoped tool access is one of the most common and consequential mistakes in agentic system design.
 
 ## Why Scoping Matters
 
@@ -47,16 +47,16 @@ Every tool Claude has access to represents a capability it might use. Claude doe
 </div>
 
 <ExamTip>
-The exam tests scoping in security and design questions. The correct answer consistently favors **giving agents the minimum set of tools needed for the current task**, assembled dynamically based on context, over giving all agents access to all tools.
+The exam tests scoping in security and design questions. The correct answer consistently favors `giving agents the minimum set of tools needed for the current task`, assembled dynamically based on context, over giving all agents access to all tools.
 </ExamTip>
 
 ---
 
 ## Static vs. Dynamic Tool Sets
 
-**Static scoping** gives each agent a fixed set of tools defined at deployment time. This works for simple, single-purpose agents but breaks down for general-purpose assistants.
+`Static scoping` gives each agent a fixed set of tools defined at deployment time. This works for simple, single-purpose agents but breaks down for general-purpose assistants.
 
-**Dynamic scoping** selects the tool set based on the current task, user role, or conversation context:
+`Dynamic scoping` selects the tool set based on the current task, user role, or conversation context:
 
 ```python
 import anthropic

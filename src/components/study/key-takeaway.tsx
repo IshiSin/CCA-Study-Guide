@@ -12,7 +12,7 @@ export function KeyTakeaway({ children, title = "Key Takeaways" }: KeyTakeawayPr
         <Star className="h-4 w-4 text-primary fill-primary" />
         <h3 className="font-bold text-primary text-sm uppercase tracking-wide">{title}</h3>
       </div>
-      <div className="text-sm space-y-1 [&_ul]:space-y-2 [&_li]:flex [&_li]:gap-2 [&_li]:text-muted-foreground [&_li::marker]:hidden [&_li]:before:content-['→'] [&_li]:before:text-primary [&_li]:before:shrink-0 [&_li]:before:mt-px [&_strong]:text-foreground [&_code]:bg-primary/10 [&_code]:text-primary [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_code]:font-mono">
+      <div className="text-sm space-y-1 [&_ul]:space-y-2 [&_li]:flex [&_li]:gap-2 [&_li]:text-muted-foreground [&_li::marker]:hidden [&_li]:before:content-['→'] [&_li]:before:text-primary [&_li]:before:shrink-0 [&_li]:before:mt-px [&_strong]:text-foreground [&_code]:text-primary [&_code]:font-mono [&_code]:font-semibold">
         {children}
       </div>
     </div>

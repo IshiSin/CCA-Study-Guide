@@ -32,8 +32,8 @@ export default async function AgentSdkPage() {
         { label: "Domain 1", href: "/study/domain-1" },
         { label: mdx.frontmatter.title },
       ]}
-      prev={{ title: "Task Decomposition", href: "/study/domain-1/task-decomposition" }}
-      next={{ title: "Session & State Management", href: "/study/domain-1/session-state" }}
+      prev={{ title: "Domain 1 Overview", href: "/study/domain-1" }}
+      next={{ title: "Agentic Loops", href: "/study/domain-1/agentic-loops" }}
     >
       {content}
     </TopicLayout>

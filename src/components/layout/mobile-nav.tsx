@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Menu, X, GraduationCap, BookOpen, Brain, Zap, FlipHorizontal, FileText, FlaskConical, BarChart3 } from "lucide-react"
+import { Menu, X, GraduationCap, BookOpen, Brain, Zap, FlipHorizontal, FlaskConical, BarChart3 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
@@ -12,7 +12,7 @@ const navItems = [
   { label: "Quiz", href: "/quiz", icon: Brain },
   { label: "Scenarios", href: "/scenarios", icon: Zap },
   { label: "Flashcards", href: "/flashcards", icon: FlipHorizontal },
-  { label: "Cheatsheets", href: "/cheatsheets", icon: FileText },
+
   { label: "Labs", href: "/labs", icon: FlaskConical },
   { label: "Progress", href: "/progress", icon: BarChart3 },
 ]

@@ -5,7 +5,7 @@ estimatedMinutes: 20
 domain: 3
 ---
 
-**Agent skills** (also called **skills**) are an advanced form of slash command — structured prompt files that tell Claude Code not just what to do, but when to do it and how to present itself. Skills are used to build repeatable, shareable agent workflows that activate automatically under the right conditions.
+`Agent skills` (also called `skills`) are an advanced form of slash command — structured prompt files that tell Claude Code not just what to do, but when to do it and how to present itself. Skills are used to build repeatable, shareable agent workflows that activate automatically under the right conditions.
 
 ## Skills vs. Slash Commands
 
@@ -72,7 +72,7 @@ Run `git diff --staged` to see what's staged, then write a commit message that:
 Then ask me to confirm before running `git commit -m "..."`.
 ```
 
-More sophisticated skills include **trigger conditions** — descriptions of when Claude should automatically invoke the skill:
+More sophisticated skills include `trigger conditions` — descriptions of when Claude should automatically invoke the skill:
 
 ```markdown
 <!-- .claude/commands/review-pr.md -->
@@ -170,9 +170,9 @@ Report with estimated impact (High/Medium/Low) and specific line references.
 ## Sharing Skills Across Teams
 
 Because skills are files in `.claude/commands/`, they are:
-- **Version controlled** — commit them to git, review changes in PRs
-- **Shareable** — new team members clone the repo and get all skills immediately
-- **Evolvable** — improve trigger conditions and prompts over time like any code
+- `Version controlled` — commit them to git, review changes in PRs
+- `Shareable` — new team members clone the repo and get all skills immediately
+- `Evolvable` — improve trigger conditions and prompts over time like any code
 
 ```
 .claude/

@@ -13,7 +13,7 @@ const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-dis
 
 export const metadata: Metadata = {
   title: "CCA Study Guide — Claude Certified Architect",
-  description: "Comprehensive study guide for the Claude Certified Architect (CCA) exam. Interactive quizzes, flashcards, scenarios, and cheatsheets.",
+  description: "Comprehensive study guide for the Claude Certified Architect (CCA) exam. Interactive quizzes, flashcards, scenarios, and hands-on labs.",
 }
 
 export default function RootLayout({

@@ -1,9 +1,20 @@
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import Link from "next/link"
-import { Brain } from "lucide-react"
-import { domains, domainColorMap } from "@/content/domains"
+import { notFound } from 'next/navigation'
+import { domains } from '@/content/domains'
+import { domain1Questions } from '@/content/quizzes/domain-1'
+import { domain2Questions } from '@/content/quizzes/domain-2'
+import { domain3Questions } from '@/content/quizzes/domain-3'
+import { domain4Questions } from '@/content/quizzes/domain-4'
+import { domain5Questions } from '@/content/quizzes/domain-5'
+import { DomainQuizClient } from '@/components/quiz/domain-quiz-client'
+import type { QuizQuestion } from '@/lib/types'
+
+const questionsByDomain: Record<number, QuizQuestion[]> = {
+  1: domain1Questions,
+  2: domain2Questions,
+  3: domain3Questions,
+  4: domain4Questions,
+  5: domain5Questions,
+}
 
 interface Props {
   params: { id: string }
@@ -12,57 +23,13 @@ interface Props {
 export default function DomainQuizPage({ params }: Props) {
   const domainId = parseInt(params.id)
   const domain = domains.find(d => d.id === domainId)
+  const questions = questionsByDomain[domainId]
 
-  if (!domain) {
-    return (
-      <div className="p-6 max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-4">Domain Not Found</h1>
-        <Button asChild variant="outline">
-          <Link href="/quiz">Back to Quizzes</Link>
-        </Button>
-      </div>
-    )
+  if (!domain || !questions) {
+    notFound()
   }
 
-  const colors = domainColorMap[domain.color]
-
-  return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="mb-8">
-        <Badge className={`${colors.badge} mb-3`}>Domain {domain.id}</Badge>
-        <h1 className="text-3xl font-bold mb-2">{domain.name} Quiz</h1>
-        <p className="text-muted-foreground">12–15 questions · ~15 minutes</p>
-      </div>
-
-      <Card className="border-primary/30 bg-primary/5">
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="p-3 rounded-lg bg-primary/10">
-              <Brain className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <CardTitle>Quiz Coming Soon</CardTitle>
-              <CardDescription>Questions for this domain are being prepared</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-muted-foreground text-sm">
-            This quiz will test your knowledge of {domain.name} with scenario-based questions,
-            detailed explanations, and anti-pattern identification.
-          </p>
-          <div className="flex gap-3">
-            <Button asChild variant="outline">
-              <Link href="/quiz">Back to Quizzes</Link>
-            </Button>
-            <Button asChild variant="outline">
-              <Link href={`/study/${domain.slug}`}>Study This Domain</Link>
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  )
+  return <DomainQuizClient questions={questions} domain={domain} />
 }
 
 export function generateStaticParams() {

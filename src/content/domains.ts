@@ -9,10 +9,10 @@ export const domains: Domain[] = [
     description: 'Design multi-agent systems, orchestration patterns, task decomposition, session state management, and failure recovery strategies.',
     color: 'blue',
     topics: [
+      { slug: 'agent-sdk', title: 'Claude Agent SDK', estimatedMinutes: 30 },
       { slug: 'agentic-loops', title: 'Agentic Loops', estimatedMinutes: 20 },
       { slug: 'hub-and-spoke', title: 'Hub-and-Spoke Orchestration', estimatedMinutes: 25 },
       { slug: 'task-decomposition', title: 'Task Decomposition', estimatedMinutes: 20 },
-      { slug: 'agent-sdk', title: 'Claude Agent SDK', estimatedMinutes: 30 },
       { slug: 'session-state', title: 'Session & State Management', estimatedMinutes: 20 },
       { slug: 'failure-recovery', title: 'Failure Recovery', estimatedMinutes: 20 },
       { slug: 'anti-patterns', title: 'Anti-Patterns', estimatedMinutes: 15 },

@@ -95,7 +95,7 @@ const weeks: Week[] = [
       { id: "w3-t6", label: "MCP Configuration", href: "/study/domain-3/mcp-config", type: "read", minutes: 20 },
       { id: "w3-t7", label: "Domain 3 Quiz", href: "/quiz/domain/3", type: "quiz", minutes: 20 },
       { id: "w3-t8", label: "Lab 08: Claude Code Config", href: "/labs/lab-08", type: "lab", minutes: 45 },
-      { id: "w3-t9", label: "MCP Cheatsheet", href: "/cheatsheets/mcp", type: "practice", minutes: 10 },
+      { id: "w3-t9", label: "Domain 3 Flashcards", href: "/flashcards", type: "practice", minutes: 10 },
     ],
   },
   {
@@ -133,7 +133,7 @@ const weeks: Week[] = [
       { id: "w5-t6", label: "Domain 5 Quiz", href: "/quiz/domain/5", type: "quiz", minutes: 20 },
       { id: "w5-t7", label: "Scenarios: Multi-Agent Research", href: "/scenarios/multi-agent-research", type: "practice", minutes: 25 },
       { id: "w5-t8", label: "Scenarios: Customer Support", href: "/scenarios/customer-support", type: "practice", minutes: 20 },
-      { id: "w5-t9", label: "All Cheatsheets review", href: "/cheatsheets", type: "practice", minutes: 10 },
+      { id: "w5-t9", label: "Domain 5 Flashcards", href: "/flashcards", type: "practice", minutes: 10 },
     ],
   },
   {
@@ -150,7 +150,7 @@ const weeks: Week[] = [
       { id: "w6-t4", label: "Scenario: Structured Extraction", href: "/scenarios/structured-extraction", type: "practice", minutes: 20 },
       { id: "w6-t5", label: "Lab 07: Multi-Agent System", href: "/labs/lab-07", type: "lab", minutes: 45 },
       { id: "w6-t6", label: "Lab 09: Capstone Project", href: "/labs/lab-09", type: "lab", minutes: 60 },
-      { id: "w6-t7", label: "Anti-Patterns Cheatsheet", href: "/cheatsheets/anti-patterns", type: "read", minutes: 10 },
+      { id: "w6-t7", label: "Anti-Patterns review", href: "/study/domain-1/anti-patterns", type: "read", minutes: 10 },
     ],
   },
   {
@@ -176,9 +176,9 @@ const weeks: Week[] = [
     totalMinutes: 120,
     focus: "Light review only — you've done the work. Focus on confidence and logistics.",
     tasks: [
-      { id: "w8-t1", label: "Review all cheatsheets", href: "/cheatsheets", type: "read", minutes: 30 },
+      { id: "w8-t1", label: "Flashcard review — all domains", href: "/flashcards", type: "practice", minutes: 30 },
       { id: "w8-t2", label: "Flashcards — cards rated 'Again' or 'Hard'", href: "/flashcards", type: "practice", minutes: 20 },
-      { id: "w8-t3", label: "Domain 1 & 3 anti-patterns quick review", href: "/cheatsheets/anti-patterns", type: "read", minutes: 15 },
+      { id: "w8-t3", label: "Domain 1 & 3 anti-patterns quick review", href: "/study/domain-1/anti-patterns", type: "read", minutes: 15 },
       { id: "w8-t4", label: "Progress dashboard — confirm readiness", href: "/progress", type: "practice", minutes: 10 },
       { id: "w8-t5", label: "Test your Pearson VUE setup", type: "practice", minutes: 15 },
       { id: "w8-t6", label: "Take the exam!", type: "practice", minutes: 120 },

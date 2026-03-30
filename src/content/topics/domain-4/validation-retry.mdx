@@ -5,14 +5,14 @@ estimatedMinutes: 20
 domain: 4
 ---
 
-Even with well-designed schemas, Claude can occasionally produce invalid output — malformed JSON, missing required fields, or values outside allowed ranges. **Validation and retry** patterns make output pipelines robust without requiring perfect output on every call.
+Even with well-designed schemas, Claude can occasionally produce invalid output — malformed JSON, missing required fields, or values outside allowed ranges. `Validation and retry` patterns make output pipelines robust without requiring perfect output on every call.
 
 ## The Parse-Then-Validate Pattern
 
 Validation has two stages:
 
-1. **Parse** — can the text be deserialized? (`json.loads()` succeeds)
-2. **Validate** — does the parsed object match the expected schema?
+1. `Parse` — can the text be deserialized? (`json.loads()` succeeds)
+2. `Validate` — does the parsed object match the expected schema?
 
 Both can fail independently. A string `"true"` parses fine but may fail if a boolean was required:
 

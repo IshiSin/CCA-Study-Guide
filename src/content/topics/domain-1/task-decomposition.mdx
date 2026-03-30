@@ -5,42 +5,40 @@ estimatedMinutes: 20
 domain: 1
 ---
 
-**Task decomposition** is the process of breaking a complex goal into subtasks that can be efficiently executed by agents. Poor decomposition leads to wasted context, coordination overhead, and hard-to-debug failures.
+`Task decomposition` is the process of breaking a complex goal into subtasks that can be efficiently executed by agents. Poor decomposition leads to wasted context, coordination overhead, and hard-to-debug failures.
 
 ## Three Decomposition Patterns
 
-<MermaidDiagram chart={`flowchart LR
-    subgraph Sequential ["Sequential (Pipeline)"]
-        direction LR
-        S1["Task A"] --> S2["Task B"] --> S3["Task C"]
-    end
-
-    subgraph Parallel ["Parallel (Fan-out / Fan-in)"]
-        direction TB
-        P0["Coordinator"] --> P1["Task A"]
-        P0 --> P2["Task B"]
-        P0 --> P3["Task C"]
-        P1 --> P4["Aggregator"]
-        P2 --> P4
-        P3 --> P4
-    end
-
-    subgraph Hierarchical ["Hierarchical (Tree)"]
-        direction TB
-        H0["Root Coordinator"] --> H1["Sub-coordinator A"]
-        H0 --> H2["Sub-coordinator B"]
-        H1 --> H3["Leaf Task"]
-        H1 --> H4["Leaf Task"]
-        H2 --> H5["Leaf Task"]
-    end`}
-  title="Three core decomposition patterns"
-/>
+<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
+  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Three Core Decomposition Patterns</div>
+  <table className="w-full">
+    <thead>
+      <tr className="bg-blue-950/40 border-b border-border">
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Sequential (Pipeline)</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Parallel (Fan-out / Fan-in)</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground">Hierarchical (Tree)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-border">
+        <td className="px-4 py-4 font-mono text-xs text-muted-foreground whitespace-pre">{`Task A\n  ↓\nTask B\n  ↓\nTask C`}</td>
+        <td className="px-4 py-4 font-mono text-xs text-muted-foreground whitespace-pre">{`     Coordinator\n    /     |     \\\nTask A Task B Task C\n    \\     |     /\n     Aggregator`}</td>
+        <td className="px-4 py-4 font-mono text-xs text-muted-foreground whitespace-pre">{`    Root Coordinator\n       /        \\\n  Sub-coord A  Sub-coord B\n   /      \\         \\\nLeaf A  Leaf B     Leaf C`}</td>
+      </tr>
+      <tr className="border-b border-border last:border-0">
+        <td className="px-4 py-3 text-blue-400">Each step's output feeds the next. Order is strict.</td>
+        <td className="px-4 py-3 text-blue-400">Coordinator fans out to independent tasks, then collects all results.</td>
+        <td className="px-4 py-3 text-blue-400">Sub-coordinators each manage a group of leaf tasks. Scales to large task counts.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 ### Sequential (Pipeline)
 
 Tasks must execute in order — each step's output is the next step's input.
 
-**Use when:** Tasks have strict data dependencies (B needs A's output)
+`Use when:` Tasks have strict data dependencies (B needs A's output)
 
 ```python
 def sequential_pipeline(raw_document: str) -> dict:
@@ -71,7 +69,7 @@ def sequential_pipeline(raw_document: str) -> dict:
 
 Independent tasks run simultaneously; results are aggregated.
 
-**Use when:** Tasks are independent and latency matters
+`Use when:` Tasks are independent and latency matters
 
 ```python
 import asyncio
@@ -103,7 +101,7 @@ async def parallel_research(topics: list[str]) -> str:
 
 Sub-coordinators manage clusters of related tasks, reporting up to a root coordinator.
 
-**Use when:** Task count is large (10+) or task groups have distinct expertise requirements
+`Use when:` Task count is large (10+) or task groups have distinct expertise requirements
 
 ```python
 def hierarchical_agent(enterprise_goal: str) -> str:
@@ -184,35 +182,23 @@ The exam frequently presents a scenario and asks "should this be a single agent 
 Each subtask gets its own context window, but you must plan the budget.
 
 ```python
-# Approximate token budgets for common subtask types
+# Estimated token costs per subtask type (input = what Claude reads, output = what it writes)
 SUBTASK_BUDGETS = {
-    "extraction":   {"input": 8_000,  "output": 2_000},   # Structured extraction
-    "analysis":     {"input": 16_000, "output": 4_000},   # Deep analysis
-    "generation":   {"input": 4_000,  "output": 8_000},   # Content generation
-    "review":       {"input": 20_000, "output": 2_000},   # Code/doc review
-    "classification": {"input": 2_000, "output": 500},   # Simple classification
+    "extraction":     {"input": 8_000,  "output": 2_000},
+    "analysis":       {"input": 16_000, "output": 4_000},
+    "generation":     {"input": 4_000,  "output": 8_000},
+    "review":         {"input": 20_000, "output": 2_000},
+    "classification": {"input": 2_000,  "output": 500},
 }
 
-def plan_decomposition(
-    goal: str,
-    subtasks: list[dict],
-    context_window_limit: int = 200_000,
-) -> dict:
-    """Validate that decomposition fits within budget."""
-    total_tokens = sum(
-        SUBTASK_BUDGETS.get(t["type"], {}).get("input", 10_000)
-        for t in subtasks
-    )
-    parallel_max = max(
-        SUBTASK_BUDGETS.get(t["type"], {}).get("input", 10_000)
-        for t in subtasks
-    )
+# Given a list of subtasks, calculate total cost and whether to run them in parallel or sequence.
+def plan_decomposition(subtasks: list[dict], limit: int = 200_000) -> dict:
+    cost = lambda t: SUBTASK_BUDGETS.get(t["type"], {}).get("input", 10_000)
+    total = sum(cost(t) for t in subtasks)      # sequential: all costs added together
+    peak  = max(cost(t) for t in subtasks)      # parallel: only the heaviest task matters
     return {
-        "subtask_count": len(subtasks),
-        "total_sequential_tokens": total_tokens,
-        "max_parallel_peak_tokens": parallel_max,
-        "fits_in_window": parallel_max < context_window_limit,
-        "recommendation": "parallel" if total_tokens > context_window_limit * 0.5 else "sequential",
+        "fits_in_window": peak < limit,
+        "recommendation": "parallel" if total > limit * 0.5 else "sequential",
     }
 ```
 
@@ -220,9 +206,9 @@ def plan_decomposition(
 
 ## Decomposition Granularity
 
-**Too coarse:** Subtasks are still too complex, agents still fail
-**Too fine:** Coordination overhead dominates, excessive API calls
-**Right size:** Each subtask can be completed reliably with the tools and context it receives
+`Too coarse:` Subtasks are still too complex, agents still fail
+`Too fine:` Coordination overhead dominates, excessive API calls
+`Right size:` Each subtask can be completed reliably with the tools and context it receives
 
 ```python
 # TOO COARSE: "Write a complete market analysis" — too complex for one subagent

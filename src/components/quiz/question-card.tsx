@@ -18,6 +18,7 @@ interface QuestionCardProps {
   submitted: boolean
   isFlagged?: boolean
   onFlag?: () => void
+  showSubmitButton?: boolean
 }
 
 export function QuestionCard({
@@ -30,6 +31,7 @@ export function QuestionCard({
   submitted,
   isFlagged,
   onFlag,
+  showSubmitButton = true,
 }: QuestionCardProps) {
   return (
     <div className="space-y-6">
@@ -107,8 +109,8 @@ export function QuestionCard({
         })}
       </div>
 
-      {/* Submit button (domain mode only — shown when not yet submitted) */}
-      {!submitted && (
+      {/* Submit button (domain mode only) */}
+      {showSubmitButton && !submitted && (
         <Button
           onClick={onSubmit}
           disabled={!selectedAnswer}

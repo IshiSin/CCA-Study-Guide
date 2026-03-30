@@ -5,7 +5,7 @@ estimatedMinutes: 25
 domain: 2
 ---
 
-The **Model Context Protocol (MCP)** is an open standard that defines how AI models communicate with external systems. Rather than every integration being custom-coded, MCP provides a uniform protocol: the host (Claude) speaks MCP, and any compliant server plugs in automatically.
+The `Model Context Protocol (MCP)` is an open standard that defines how AI models communicate with external systems. Rather than every integration being custom-coded, MCP provides a uniform protocol: the host (Claude) speaks MCP, and any compliant server plugs in automatically.
 
 ## Why MCP Exists
 
@@ -82,14 +82,14 @@ MCP defines exactly three things a server can expose:
 </div>
 
 <ExamTip>
-The exam tests the distinction between **tools** and **resources**. Tools are for actions that may have side effects (writes, API calls, mutations). Resources are for read-only data retrieval. If you need to fetch a file for context, use a resource. If you need to write a file, use a tool.
+The exam tests the distinction between `tools` and `resources`. Tools are for actions that may have side effects (writes, API calls, mutations). Resources are for read-only data retrieval. If you need to fetch a file for context, use a resource. If you need to write a file, use a tool.
 </ExamTip>
 
 ---
 
 ## Transport Layer: JSON-RPC 2.0
 
-All MCP communication uses **JSON-RPC 2.0** — a lightweight remote procedure call protocol over a transport of your choice.
+All MCP communication uses `JSON-RPC 2.0` — a lightweight remote procedure call protocol over a transport of your choice.
 
 ```json
 // Client → Server: a tool call request
@@ -305,7 +305,7 @@ Resources use URI addressing. A client fetches a resource by URI:
 The host application manages MCP client connections. Claude itself only sees the tool definitions that the MCP client surfaces — it does not communicate with MCP servers directly.
 
 <ExamTip>
-The exam tests the layering: Claude sees **tool schemas** (JSON), not MCP protocol details. The MCP client handles JSON-RPC, transport, and capability negotiation. Claude just calls tools by name with arguments.
+The exam tests the layering: Claude sees `tool schemas` (JSON), not MCP protocol details. The MCP client handles JSON-RPC, transport, and capability negotiation. Claude just calls tools by name with arguments.
 </ExamTip>
 
 <AntiPatternCard
@@ -339,7 +339,7 @@ tools: [
 
 <KeyTakeaway>
 - MCP standardizes AI-to-system communication via JSON-RPC 2.0 over pluggable transports
-- Three primitives: **tools** (actions with side effects), **resources** (read-only data), **prompts** (reusable templates)
+- Three primitives: `tools` (actions with side effects), `resources` (read-only data), `prompts` (reusable templates)
 - Initialize handshake negotiates capabilities before any tool calls
 - `tools/list` enables dynamic discovery — add server-side tools without client changes
 - Claude sees tool schemas only; MCP client handles all protocol details

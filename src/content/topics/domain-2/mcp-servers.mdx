@@ -5,7 +5,7 @@ estimatedMinutes: 30
 domain: 2
 ---
 
-An **MCP server** is a process that exposes tools, resources, and/or prompts via the Model Context Protocol. Clients (like Claude Code or your agent) connect to it, discover its capabilities, and invoke them. You build MCP servers using the official SDKs — the protocol details are handled for you.
+An `MCP server` is a process that exposes tools, resources, and/or prompts via the Model Context Protocol. Clients (like Claude Code or your agent) connect to it, discover its capabilities, and invoke them. You build MCP servers using the official SDKs — the protocol details are handled for you.
 
 ## Python MCP Server: Basic Structure
 
@@ -71,7 +71,7 @@ if __name__ == "__main__":
 ```
 
 <ExamTip>
-The exam tests that you know MCP servers are **separate processes** that communicate via transport — not in-process function calls. The server process starts independently; the client connects to it. This is why stdio transport is standard for local tools: the client spawns the server process and connects via its stdin/stdout.
+The exam tests that you know MCP servers are `separate processes` that communicate via transport — not in-process function calls. The server process starts independently; the client connects to it. This is why stdio transport is standard for local tools: the client spawns the server process and connects via its stdin/stdout.
 </ExamTip>
 
 ---

@@ -57,7 +57,7 @@ Claude receives the full conversation context (system prompt + history + tool re
 
 ### Phase 2 — Act
 
-If Claude emits a tool call, the host application executes it. The tool might be a database query, file read, API call, or a sub-agent invocation. Execution happens **outside** Claude — the model only receives the result.
+If Claude emits a tool call, the host application executes it. The tool might be a database query, file read, API call, or a sub-agent invocation. Execution happens `outside` Claude — the model only receives the result.
 
 ### Phase 3 — Observe
 
@@ -65,27 +65,27 @@ The tool result is appended to the conversation as a `tool_result` message. Clau
 
 ### Phase 4 — Stop or Continue
 
-The loop ends when **any** stop condition is met. If none are met, the loop continues.
+The loop ends when `any` stop condition is met. If none are met, the loop continues.
 
 ---
 
 ## Concrete Walkthrough: Two Iterations
 
-**Goal:** "Check if order #ORD-4521 has shipped, and email the customer if it has."
+`Goal:` "Check if order #ORD-4521 has shipped, and email the customer if it has."
 
 Available tools: `check_order_status`, `send_email`.
 
 ---
 
-**Iteration 1**
+`Iteration 1`
 
-**Reason** — Claude sees both tools, recognises it doesn't have order status yet, and emits a tool call:
+`Reason` — Claude sees both tools, recognises it doesn't have order status yet, and emits a tool call:
 
 ```json
 { "name": "check_order_status", "input": { "order_id": "ORD-4521" } }
 ```
 
-**Act** — The host executes `check_order_status("ORD-4521")` and gets back:
+`Act` — The host executes `check_order_status("ORD-4521")` and gets back:
 
 ```json
 {
@@ -96,13 +96,13 @@ Available tools: `check_order_status`, `send_email`.
 }
 ```
 
-**Observe** — This result is appended to the conversation as a `tool_result` message. Claude's context now contains the carrier, tracking number, and customer email.
+`Observe` — This result is appended to the conversation as a `tool_result` message. Claude's context now contains the carrier, tracking number, and customer email.
 
 ---
 
-**Iteration 2**
+`Iteration 2`
 
-**Reason** — Claude now has everything it needs. It decides to send the email and emits:
+`Reason` — Claude now has everything it needs. It decides to send the email and emits:
 
 ```json
 {
@@ -115,11 +115,11 @@ Available tools: `check_order_status`, `send_email`.
 }
 ```
 
-**Act** — Host executes `send_email(...)`.
+`Act` — Host executes `send_email(...)`.
 
-**Observe** — Result appended: `{ "status": "sent", "message_id": "msg_8b3f" }`.
+`Observe` — Result appended: `{ "status": "sent", "message_id": "msg_8b3f" }`.
 
-**Stop** — No more tool calls are needed. Claude emits its final text response:
+`Stop` — No more tool calls are needed. Claude emits its final text response:
 
 > *"Done — order #ORD-4521 has shipped via FedEx (tracking: 7489-2341-XX) and I've sent a notification to alice@example.com."*
 
@@ -129,7 +129,7 @@ The host sees no `tool_use` block in this response, so the loop exits cleanly af
 
 ## Stop Conditions
 
-A well-designed loop has **explicit stop conditions**. Never rely solely on Claude deciding to stop.
+A well-designed loop has `explicit stop conditions`. Never rely solely on Claude deciding to stop.
 
 
 <div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
@@ -178,120 +178,41 @@ A well-designed loop has **explicit stop conditions**. Never rely solely on Clau
 </div>
 
 <ExamTip>
-The exam tests whether you know that **max_iterations must be set explicitly by the host** — it is not a parameter you pass to the Claude API. Claude itself has no built-in iteration limit. A loop without a host-enforced max_iterations can run indefinitely and exhaust your token budget.
+The exam tests whether you know that `max_iterations must be set explicitly by the host` — it is not a parameter you pass to the Claude API. Claude itself has no built-in iteration limit. A loop without a host-enforced max_iterations can run indefinitely and exhaust your token budget.
 </ExamTip>
 
 ---
 
 ## SDK Implementation
 
-The Claude Agent SDK provides the `Agent` class to manage the loop. You implement stop conditions and hooks around it.
-
-Two Python terms come up repeatedly across all the code walkthroughs — here's what they mean:
-
-- **Decorator** (`@something`) — a modifier placed on the line directly above a function. It wraps that function with extra behaviour. `@tool` tells the SDK "register this function as a tool Claude can call." You'll see it before every tool definition.
-- **Docstring** (`"""..."""`) — the string written immediately inside a function, used to describe what it does. In the Agent SDK, the docstring is not just documentation — it becomes the tool description that Claude reads to decide when and how to call that tool.
+The `Agent` class, `@tool` decorator, and `AgentHooks` are covered in the [Agent SDK topic](/study/domain-1/agent-sdk). This section focuses on what's new: enforcing the stop conditions from the table above inside a running loop.
 
 ```python
-import anthropic
-from anthropic.agents import Agent, tool  # import the Agent class and @tool decorator
+consecutive_errors = 0  # tracks back-to-back tool failures
 
-client = anthropic.Anthropic()  # create the API client (uses ANTHROPIC_API_KEY from env)
+for event in agent.run(user_goal):
 
-# @tool marks this function as a tool Claude can call during the loop
-@tool
-def search_database(query: str) -> str:
-    # docstring becomes the tool description Claude reads to decide when to use it
-    """Search the product database. Returns matching product records as JSON."""
-    return f'{{"results": ["Product A", "Product B"], "query": "{query}"}}'
+    if event.type == "iteration_start":
+        # on_iteration_start in AgentHooks handles the max_iterations guard —
+        # see the Agent SDK topic. Same idea, just inline here for clarity.
+        pass
 
-# a second tool — Claude will choose between these based on the task
-@tool
-def send_email(to: str, subject: str, body: str) -> str:
-    """Send an email. Returns delivery confirmation."""
-    return f'{{"status": "sent", "to": "{to}"}}'
+    elif event.type == "tool_error":
+        consecutive_errors += 1
+        if consecutive_errors >= 3:      # give up after 3 failures in a row
+            agent.stop(reason="error_threshold_exceeded")
+            break
 
-# the function that starts the agent and runs the loop
-def run_agent(user_goal: str, max_iterations: int = 10) -> str:
-    # create the Agent, wiring together the client, model, system prompt, and tools
-    agent = Agent(
-        client=client,
-        model="claude-opus-4-5",
-        system="You are a helpful assistant with access to a product database and email tool.",
-        tools=[search_database, send_email],  # only these tools are available to Claude
-    )
+    elif event.type == "tool_result":
+        consecutive_errors = 0           # a successful call resets the streak
 
-    iteration = 0          # counts how many loop iterations have run
-    consecutive_errors = 0 # counts back-to-back tool failures
+    elif event.type == "usage_update":
+        if event.usage.input_tokens > 150_000:  # stop before hitting the context ceiling
+            agent.stop(reason="token_budget_exceeded")
+            break
 
-    # agent.run() yields events as the loop executes — one event per thing that happens
-    for event in agent.run(user_goal):
-
-        # fired at the start of each Reason → Act → Observe cycle
-        if event.type == "iteration_start":
-            iteration += 1
-            if iteration > max_iterations:  # host-enforced ceiling — Claude has no built-in limit
-                agent.stop(reason="max_iterations_exceeded")
-                break
-
-        # fired when a tool call throws an error
-        elif event.type == "tool_error":
-            consecutive_errors += 1
-            if consecutive_errors >= 3:  # give up after 3 failures in a row
-                agent.stop(reason="error_threshold_exceeded")
-                break
-        elif event.type == "tool_result":
-            consecutive_errors = 0  # successful tool call resets the error streak
-
-        # fired after each API call with updated token counts
-        elif event.type == "usage_update":
-            if event.usage.input_tokens > 150_000:  # stop before hitting the context limit
-                agent.stop(reason="token_budget_exceeded")
-                break
-
-    return agent.result()  # returns Claude's final text response
+return agent.result()
 ```
-
-### Loop with Lifecycle Hooks
-
-Hooks let you observe and control the loop without modifying business logic:
-
-```python
-from anthropic.agents import Agent, AgentHooks
-
-# subclass AgentHooks and override only the lifecycle events you care about
-class AuditHooks(AgentHooks):
-
-    # called once at the beginning of each iteration, before Claude reasons
-    def on_iteration_start(self, iteration: int, context):
-        print(f"[Iteration {iteration}] Context tokens: {context.token_count}")
-
-    # called every time Claude emits a tool call, before the host executes it
-    def on_tool_call(self, tool_name: str, tool_input: dict):
-        print(f"[Tool] {tool_name}({tool_input})")
-
-    # called after the host runs the tool and gets a result back
-    def on_tool_result(self, tool_name: str, result: str, error: bool):
-        if error:
-            print(f"[Tool Error] {tool_name}: {result}")
-
-    # called when the loop exits for any reason (goal complete, max iterations, etc.)
-    def on_stop(self, reason: str, iterations: int):
-        print(f"[Stop] reason={reason} after {iterations} iterations")
-
-# pass the hooks instance to Agent — the SDK calls them automatically
-agent = Agent(
-    client=client,
-    model="claude-opus-4-5",
-    system="...",
-    tools=[search_database],
-    hooks=AuditHooks(),  # hooks run alongside the loop without touching business logic
-)
-```
-
-<Callout variant="info" title="Hooks are the right place for cross-cutting concerns">
-Use hooks for logging, rate limiting, cost tracking, and audit trails. Don't put these in tool implementations — they belong at the loop level.
-</Callout>
 
 ---
 
@@ -373,29 +294,24 @@ else:
 Each iteration adds to the context. Plan for it:
 
 ```python
-def estimate_loop_cost(
-    system_tokens: int,
-    avg_tool_result_tokens: int,
-    avg_response_tokens: int,
-    max_iterations: int,
-) -> dict:
-    """Estimate total tokens for a loop of N iterations."""
-    context_growth_per_iter = avg_tool_result_tokens + avg_response_tokens
-    max_context = system_tokens + (context_growth_per_iter * max_iterations)
+# Check whether your loop will fit inside Claude's 200K window before you run it.
+def estimate_loop_cost(system_tokens, avg_tool_tokens, avg_response_tokens, max_iterations):
+    # every iteration permanently adds one tool result + one response to the context
+    growth_per_iter = avg_tool_tokens + avg_response_tokens
+    max_context = system_tokens + (growth_per_iter * max_iterations)
     return {
         "max_context_tokens": max_context,
-        "fits_in_200k_window": max_context < 200_000,
-        "estimated_input_tokens": max_context * 0.6,  # rough average
+        "fits_in_200k": max_context < 200_000,
     }
 ```
 
 <ExamTip>
-Context grows **cumulatively** in agentic loops — every tool result and response stays in the window. A loop with 20 iterations and 500-token tool results adds 10,000+ tokens. The exam tests whether you account for this in system design questions.
+Context grows `cumulatively` in agentic loops — every tool result and response stays in the window. A loop with 20 iterations and 500-token tool results adds 10,000+ tokens. The exam tests whether you account for this in system design questions.
 </ExamTip>
 
 <KeyTakeaway>
 - The agentic loop is: Reason → Act → Observe → repeat until stop condition
-- **Stop conditions must be enforced by the host** — Claude has no built-in iteration limit
+- `Stop conditions must be enforced by the host` — Claude has no built-in iteration limit
 - Always implement: max_iterations, error threshold, and token budget guards
 - Lifecycle hooks are the correct place for logging, rate limiting, and audit trails — not tool implementations
 - Context grows cumulatively each iteration — budget for this in system design

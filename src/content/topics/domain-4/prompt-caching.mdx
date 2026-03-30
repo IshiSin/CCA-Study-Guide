@@ -5,7 +5,7 @@ estimatedMinutes: 20
 domain: 4
 ---
 
-**Prompt caching** is an Anthropic API feature that lets you mark portions of your prompt for reuse across requests. When the same cached prefix is seen again, Claude doesn't reprocess those tokens — it reads from cache. This reduces both cost and latency for workloads with large, stable context.
+`Prompt caching` is an Anthropic API feature that lets you mark portions of your prompt for reuse across requests. When the same cached prefix is seen again, Claude doesn't reprocess those tokens — it reads from cache. This reduces both cost and latency for workloads with large, stable context.
 
 ## How Caching Works
 
@@ -74,7 +74,7 @@ Always structure analysis as:
 ```
 
 <ExamTip>
-`cache_control` goes on the **last content block** of what you want cached. Everything up to and including that block is cached. Content after it (subsequent blocks, user messages) is processed fresh. The exam may show a multi-block system prompt and ask which block to mark.
+`cache_control` goes on the `last content block` of what you want cached. Everything up to and including that block is cached. Content after it (subsequent blocks, user messages) is processed fresh. The exam may show a multi-block system prompt and ask which block to mark.
 </ExamTip>
 
 ---
@@ -126,9 +126,9 @@ The 5-minute TTL refreshes on each cache hit. For applications with continuous t
 ## What to Cache
 
 Cache content that is:
-- **Large** — the cost savings are proportional to token count
-- **Stable** — content that changes per request cannot be cached (it causes a cache miss)
-- **Reused** — cached content must be identical across requests
+- `Large` — the cost savings are proportional to token count
+- `Stable` — content that changes per request cannot be cached (it causes a cache miss)
+- `Reused` — cached content must be identical across requests
 
 <div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
   <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">What to Cache</div>

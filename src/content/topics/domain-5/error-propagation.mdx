@@ -5,7 +5,7 @@ estimatedMinutes: 15
 domain: 5
 ---
 
-In a single-agent system, an error either fails the request or gets handled locally. In a **multi-agent system**, errors have a propagation path: they originate in a tool or subagent, travel through the coordinator, and eventually reach the user or an escalation handler. Designing that path explicitly — rather than letting errors bubble up as raw exceptions — is what separates brittle pipelines from resilient ones.
+In a single-agent system, an error either fails the request or gets handled locally. In a `multi-agent system`, errors have a propagation path: they originate in a tool or subagent, travel through the coordinator, and eventually reach the user or an escalation handler. Designing that path explicitly — rather than letting errors bubble up as raw exceptions — is what separates brittle pipelines from resilient ones.
 
 ## The Error Propagation Path
 
@@ -92,7 +92,7 @@ class AgentResult:
 
 ## Containment Boundaries
 
-A **containment boundary** is a layer that catches all exceptions from below, classifies them, and emits structured errors upward. Every subagent is a containment boundary:
+A `containment boundary` is a layer that catches all exceptions from below, classifies them, and emits structured errors upward. Every subagent is a containment boundary:
 
 ```python
 import json

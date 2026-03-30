@@ -5,7 +5,7 @@ estimatedMinutes: 20
 domain: 5
 ---
 
-The **context window** is the total amount of text — measured in tokens — that a model can see at once. Everything that influences a Claude response must fit: the system prompt, conversation history, tool results, file contents, and the response itself. When context fills up, you cannot simply add more — something must be removed or summarized.
+The `context window` is the total amount of text — measured in tokens — that a model can see at once. Everything that influences a Claude response must fit: the system prompt, conversation history, tool results, file contents, and the response itself. When context fills up, you cannot simply add more — something must be removed or summarized.
 
 ## What Goes Into the Context Window
 
@@ -84,7 +84,7 @@ The **context window** is the total amount of text — measured in tokens — th
 200K tokens sounds large, but tool-heavy agentic sessions consume it quickly. A single large file read can consume tens of thousands of tokens.
 
 <ExamTip>
-The exam tests that you know the context window is **shared** between input and output — it is not "200K input + separate output." The `max_tokens` parameter controls how much of the window Claude can use for its response. If you set `max_tokens=4096` with a 195K-token prompt, only 4K tokens remain for the response.
+The exam tests that you know the context window is `shared` between input and output — it is not "200K input + separate output." The `max_tokens` parameter controls how much of the window Claude can use for its response. If you set `max_tokens=4096` with a 195K-token prompt, only 4K tokens remain for the response.
 </ExamTip>
 
 ---
@@ -93,9 +93,9 @@ The exam tests that you know the context window is **shared** between input and 
 
 Tokens are not characters or words — they are subword units from Claude's tokenizer. As a rough rule:
 
-- **1 token ≈ 4 characters of English prose**
-- **1 token ≈ ¾ of a word**
-- **Code tokenizes differently** — punctuation, identifiers, and whitespace each cost tokens
+- `1 token ≈ 4 characters of English prose`
+- `1 token ≈ ¾ of a word`
+- `Code tokenizes differently` — punctuation, identifiers, and whitespace each cost tokens
 
 ```python
 import anthropic
@@ -143,10 +143,10 @@ The `/compact` command can also be invoked manually at any time. After compactio
 ### What Claude Code Prioritizes in Context
 
 When managing context, Claude Code keeps:
-1. **System prompt and CLAUDE.md** — always present
-2. **Recent turns** — the last N exchanges are kept verbatim
-3. **Summaries of older turns** — earlier history is compressed
-4. **Current file states** — re-read as needed rather than kept in context
+1. `System prompt and CLAUDE.md` — always present
+2. `Recent turns` — the last N exchanges are kept verbatim
+3. `Summaries of older turns` — earlier history is compressed
+4. `Current file states` — re-read as needed rather than kept in context
 
 ---
 
@@ -156,41 +156,26 @@ For long agentic tasks, budget context explicitly:
 
 ```python
 import anthropic
-
 client = anthropic.Anthropic()
 
-CONTEXT_LIMIT = 200_000
-RESPONSE_BUDGET = 8_000       # Reserve for Claude's response
-SAFETY_MARGIN = 10_000        # Don't fill to the brim
-USABLE_BUDGET = CONTEXT_LIMIT - RESPONSE_BUDGET - SAFETY_MARGIN  # 182,000
+# Reserve space for Claude's reply and a safety buffer — the rest is available for files.
+USABLE_BUDGET = 200_000 - 8_000 - 10_000  # 182,000 tokens for input
 
+# Pack as many files as fit, measure each one before adding it, stop when full.
 def build_prompt_with_budget(files: list[str], task: str) -> list[dict]:
-    """Include as many files as fit within the context budget."""
     messages = []
     tokens_used = 0
 
     for path in files:
-        with open(path) as f:
-            content = f.read()
+        msg = {"role": "user", "content": f"File: {path}\n\n{open(path).read()}"}
+        cost = client.messages.count_tokens(model="claude-opus-4-6", messages=[msg]).input_tokens
 
-        file_message = {"role": "user", "content": f"File: {path}\n\n{content}"}
-
-        # Count tokens for this file
-        token_count = client.messages.count_tokens(
-            model="claude-opus-4-6",
-            messages=[file_message],
-        ).input_tokens
-
-        if tokens_used + token_count > USABLE_BUDGET:
-            # Would overflow — stop adding files
-            messages.append({
-                "role": "user",
-                "content": f"[Note: {len(files) - len(messages)} files omitted due to context limits]"
-            })
+        if tokens_used + cost > USABLE_BUDGET:
+            messages.append({"role": "user", "content": f"[{len(files) - len(messages)} files omitted — context limit reached]"})
             break
 
-        messages.append(file_message)
-        tokens_used += token_count
+        messages.append(msg)
+        tokens_used += cost
 
     messages.append({"role": "user", "content": task})
     return messages
@@ -202,7 +187,7 @@ def build_prompt_with_budget(files: list[str], task: str) -> list[dict]:
 
 When the codebase is too large to fit in context:
 
-**1. Selective inclusion — only read what's relevant**
+`1. Selective inclusion — only read what's relevant`
 ```python
 # Instead of reading all files upfront, read as needed during the task
 # Let Claude decide what to read based on the task
@@ -210,7 +195,7 @@ system = """When you need to understand a file, use the Read tool to fetch it.
 Don't try to hold the entire codebase in memory — explore lazily."""
 ```
 
-**2. Summarize before including**
+`2. Summarize before including`
 ```python
 def summarize_file_for_context(path: str) -> str:
     """Get a compact summary instead of raw file content."""
@@ -229,7 +214,7 @@ def summarize_file_for_context(path: str) -> str:
     return f"[{path}]: {summary.content[0].text}"
 ```
 
-**3. Use retrieval instead of injection**
+`3. Use retrieval instead of injection`
 ```python
 # Build a vector index of the codebase
 # Retrieve only the N most relevant chunks for each task

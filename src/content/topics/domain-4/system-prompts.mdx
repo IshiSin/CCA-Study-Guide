@@ -5,7 +5,7 @@ estimatedMinutes: 20
 domain: 4
 ---
 
-The **system prompt** is the persistent instruction layer that frames every conversation. It runs before the first human turn and is never visible to end users — yet it is the single biggest lever for shaping Claude's behavior. Getting system prompts right is a core skill for the CCA exam.
+The `system prompt` is the persistent instruction layer that frames every conversation. It runs before the first human turn and is never visible to end users — yet it is the single biggest lever for shaping Claude's behavior. Getting system prompts right is a core skill for the CCA exam.
 
 ## Anatomy of a System Prompt
 
@@ -258,7 +258,7 @@ const userMessage = JSON.stringify({
   </table>
 </div>
 
-The system prompt is **constant across all conversations**. The human turn is **per-request**. If something changes per user or per request, it belongs in the human turn — not the system prompt.
+The system prompt is `constant across all conversations`. The human turn is `per-request`. If something changes per user or per request, it belongs in the human turn — not the system prompt.
 
 <ExamTip>
 A common exam question: "Where should you put dynamic user account data in a multi-tenant application?" The answer is the human turn (or as a structured injection into a designated section), never interpolated into the system prompt. This prevents prompt injection and keeps the system prompt cacheable (see Prompt Caching).
@@ -268,7 +268,7 @@ A common exam question: "Where should you put dynamic user account data in a mul
 
 ## System Prompt Length and Caching
 
-Longer system prompts cost more per request because they consume input tokens. However, the Anthropic API supports **prompt caching** — the system prompt can be cached and reused across requests without re-processing tokens.
+Longer system prompts cost more per request because they consume input tokens. However, the Anthropic API supports `prompt caching` — the system prompt can be cached and reused across requests without re-processing tokens.
 
 For the caching to work, the system prompt must be:
 1. Identical across requests (static content)

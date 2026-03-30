@@ -5,17 +5,17 @@ estimatedMinutes: 15
 domain: 5
 ---
 
-**Context degradation** is the phenomenon where model reliability declines as the context window fills up. A Claude session that starts crisp and accurate can drift — instructions get ignored, earlier decisions are forgotten, reasoning quality drops — not because the model changed, but because of how attention distributes across a long context.
+`Context degradation` is the phenomenon where model reliability declines as the context window fills up. A Claude session that starts crisp and accurate can drift — instructions get ignored, earlier decisions are forgotten, reasoning quality drops — not because the model changed, but because of how attention distributes across a long context.
 
 ## Why Degradation Happens
 
-Transformer models attend to all tokens, but not equally. Research consistently shows that tokens at the **beginning** and **end** of context receive stronger attention than tokens in the **middle**. In long sessions:
+Transformer models attend to all tokens, but not equally. Research consistently shows that tokens at the `beginning` and `end` of context receive stronger attention than tokens in the `middle`. In long sessions:
 
 - System prompt instructions (at the top) remain strong
 - The most recent exchange (at the bottom) is highly attended
 - Content in the middle — earlier task constraints, established decisions, prior tool results — fades
 
-This is the **lost-in-the-middle effect**: important context injected early or in the middle of a long session may effectively disappear from the model's working memory, even though it is technically still present.
+This is the `lost-in-the-middle effect`: important context injected early or in the middle of a long session may effectively disappear from the model's working memory, even though it is technically still present.
 
 ```
 Context Window (simplified attention weights):
@@ -99,7 +99,7 @@ The rule didn't change. The model didn't "decide" to ignore it. The system promp
 
 ### 1. Re-anchor Critical Instructions
 
-Place must-follow constraints in the system prompt (always attended) **and** repeat them in the most recent user message when they are critical:
+Place must-follow constraints in the system prompt (always attended) `and` repeat them in the most recent user message when they are critical:
 
 ```python
 system = """

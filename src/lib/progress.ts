@@ -6,6 +6,7 @@ const defaultProgress: UserProgress = {
   topicProgress: {},
   quizAttempts: [],
   flashcardProgress: {},
+  labProgress: {},
   studyStreak: {
     current: 0,
     longest: 0,
@@ -106,6 +107,29 @@ function updateStreak(progress: UserProgress): void {
   }
 
   progress.studyStreak.lastStudyDate = today
+}
+
+export function markLabComplete(labId: string): void {
+  const progress = getProgress()
+  progress.labProgress[labId] = {
+    labId,
+    completed: true,
+    completedAt: new Date().toISOString(),
+  }
+  updateStreak(progress)
+  saveProgress(progress)
+}
+
+export function isLabComplete(labId: string): boolean {
+  const progress = getProgress()
+  return progress.labProgress?.[labId]?.completed === true
+}
+
+export function getCompletedLabIds(): string[] {
+  const progress = getProgress()
+  return Object.values(progress.labProgress ?? {})
+    .filter((l) => l.completed)
+    .map((l) => l.labId)
 }
 
 export function clearProgress(): void {

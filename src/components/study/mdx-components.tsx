@@ -6,6 +6,7 @@ import { ExamTip } from "./exam-tip"
 import { AntiPatternCard } from "./anti-pattern-card"
 import { KeyTakeaway } from "./key-takeaway"
 import { MermaidDiagram } from "./mermaid-diagram"
+import { HubSpokeDiagram } from "./hub-spoke-diagram"
 import { cn } from "@/lib/utils"
 
 // Local type since 'mdx/types' package is not installed
@@ -19,6 +20,7 @@ export const mdxComponents: MDXComponents = {
   AntiPatternCard,
   KeyTakeaway,
   MermaidDiagram,
+  HubSpokeDiagram,
 
   // Override default HTML elements
   h1: ({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => (

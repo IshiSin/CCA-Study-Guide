@@ -32,7 +32,7 @@ export default async function SessionStatePage() {
         { label: "Domain 1", href: "/study/domain-1" },
         { label: mdx.frontmatter.title },
       ]}
-      prev={{ title: "Claude Agent SDK", href: "/study/domain-1/agent-sdk" }}
+      prev={{ title: "Task Decomposition", href: "/study/domain-1/task-decomposition" }}
       next={{ title: "Failure Recovery", href: "/study/domain-1/failure-recovery" }}
     >
       {content}

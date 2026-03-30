@@ -107,10 +107,17 @@ export interface FlashcardProgress {
 
 export type ConfidenceLevel = 'again' | 'hard' | 'good' | 'easy'
 
+export interface LabProgress {
+  labId: string
+  completed: boolean
+  completedAt?: string
+}
+
 export interface UserProgress {
   topicProgress: Record<string, TopicProgress>
   quizAttempts: QuizAttempt[]
   flashcardProgress: Record<string, FlashcardProgress>
+  labProgress: Record<string, LabProgress>
   studyStreak: {
     current: number
     longest: number

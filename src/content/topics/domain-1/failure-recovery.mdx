@@ -40,7 +40,7 @@ Production agents fail. Tools return errors, models time out, subagents produce 
 
 ## Structured Error Returns
 
-Tools and subagents should return **structured errors** — not bare exceptions and not silent failures. The coordinator needs enough information to decide whether to retry, degrade, or escalate.
+Tools and subagents should return `structured errors` — not bare exceptions and not silent failures. The coordinator needs enough information to decide whether to retry, degrade, or escalate.
 
 ```python
 from dataclasses import dataclass
@@ -298,11 +298,11 @@ class AgentError:
 />
 
 <ExamTip>
-The exam tests the difference between **fail-fast** (abort on first error) and **graceful degradation** (continue with partial results). Graceful degradation is preferred when: (1) the failing subtask is optional, (2) a partial result is better than no result, or (3) remaining tasks don't depend on the failed one. Fail-fast is preferred when the failing task is critical to correctness.
+The exam tests the difference between `fail-fast` (abort on first error) and `graceful degradation` (continue with partial results). Graceful degradation is preferred when: (1) the failing subtask is optional, (2) a partial result is better than no result, or (3) remaining tasks don't depend on the failed one. Fail-fast is preferred when the failing task is critical to correctness.
 </ExamTip>
 
 <KeyTakeaway>
-- Tools and subagents must return **structured errors** with: `success`, `error_code`, `error_message`, `retryable`
+- Tools and subagents must return `structured errors` with: `success`, `error_code`, `error_message`, `retryable`
 - Retry with exponential backoff + jitter for transient errors (rate limits, timeouts)
 - Coordinators choose from: Retry, Degrade (partial result), Skip (optional task), Escalate (critical failure), Abort
 - Mark tasks as `critical=True` or `optional=True` to drive recovery strategy decisions

@@ -33,7 +33,7 @@ export default async function TaskDecompositionPage() {
         { label: mdx.frontmatter.title },
       ]}
       prev={{ title: "Hub-and-Spoke Orchestration", href: "/study/domain-1/hub-and-spoke" }}
-      next={{ title: "Claude Agent SDK", href: "/study/domain-1/agent-sdk" }}
+      next={{ title: "Session & State Management", href: "/study/domain-1/session-state" }}
     >
       {content}
     </TopicLayout>

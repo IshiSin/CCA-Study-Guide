@@ -5,7 +5,7 @@ estimatedMinutes: 20
 domain: 3
 ---
 
-**CLAUDE.md** is a Markdown file that Claude Code automatically reads and injects into its context at the start of every session. It is the primary mechanism for giving Claude persistent, project-specific knowledge — coding conventions, commands, architecture decisions, and team norms — without repeating them in every prompt.
+`CLAUDE.md` is a Markdown file that Claude Code automatically reads and injects into its context at the start of every session. It is the primary mechanism for giving Claude persistent, project-specific knowledge — coding conventions, commands, architecture decisions, and team norms — without repeating them in every prompt.
 
 ## The Three-Level Hierarchy
 
@@ -41,7 +41,7 @@ Claude Code loads CLAUDE.md files from three distinct locations, composing them 
   </table>
 </div>
 
-All three levels are loaded and **concatenated** — they do not override each other. The subdirectory CLAUDE.md adds to, rather than replaces, the project-level one.
+All three levels are loaded and `concatenated` — they do not override each other. The subdirectory CLAUDE.md adds to, rather than replaces, the project-level one.
 
 <ExamTip>
 The exam tests load order. Global is loaded first, project second, subdirectory last. If asked which takes precedence when there is a conflict — because they are concatenated, later entries (subdirectory) appear after earlier ones (global), so Claude reads subdirectory context most recently. But the key exam answer is: all three are included simultaneously, not cascading overrides.
@@ -151,14 +151,14 @@ Session startup sequence:
 ```
 
 <ExamTip>
-CLAUDE.md is **not** a memory system — it does not update during a session. Changes take effect the next time Claude Code is started. For per-session state, use conversation context. For persistent memory across sessions, use CLAUDE.md.
+CLAUDE.md is `not` a memory system — it does not update during a session. Changes take effect the next time Claude Code is started. For per-session state, use conversation context. For persistent memory across sessions, use CLAUDE.md.
 </ExamTip>
 
 ---
 
 ## Practical Patterns
 
-**Document commands, not processes.** Claude Code runs commands you tell it to — the most valuable thing in CLAUDE.md is the exact commands it needs:
+`Document commands, not processes.` Claude Code runs commands you tell it to — the most valuable thing in CLAUDE.md is the exact commands it needs:
 
 ```markdown
 ## Commands
@@ -168,7 +168,7 @@ CLAUDE.md is **not** a memory system — it does not update during a session. Ch
 - `npx prisma migrate dev` — apply pending migrations
 ```
 
-**Capture non-obvious architectural decisions.** Things Claude can't infer from reading code:
+`Capture non-obvious architectural decisions.` Things Claude can't infer from reading code:
 
 ```markdown
 ## Architecture Decisions
@@ -177,7 +177,7 @@ CLAUDE.md is **not** a memory system — it does not update during a session. Ch
 - The /health endpoint must not require authentication — load balancer depends on it
 ```
 
-**List explicit do-nots.** Prevent Claude from making well-intentioned but wrong choices:
+`List explicit do-nots.` Prevent Claude from making well-intentioned but wrong choices:
 
 ```markdown
 ## Do Not

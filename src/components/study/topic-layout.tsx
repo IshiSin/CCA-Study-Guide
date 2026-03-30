@@ -1,6 +1,7 @@
 import { Breadcrumb, type BreadcrumbItem } from "@/components/layout/breadcrumb"
 import { TopicNav } from "./topic-nav"
-import { Clock, History } from "lucide-react"
+import { TopicCompleteTracker } from "./topic-complete-tracker"
+import { Clock } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface TopicLink {
@@ -34,6 +35,7 @@ export function TopicLayout({
 }: TopicLayoutProps) {
   return (
     <div className={cn("min-h-full", className)}>
+      <TopicCompleteTracker />
       <div className="max-w-3xl mx-auto px-6 py-8">
         {/* Breadcrumb */}
         <Breadcrumb items={breadcrumbs} className="mb-6" />
@@ -56,10 +58,6 @@ export function TopicLayout({
               <span className="flex items-center gap-2">
                 <Clock className="h-4 w-4" />
                 {estimatedMinutes} min read
-              </span>
-              <span className="flex items-center gap-2">
-                <History className="h-4 w-4" />
-                Last updated: 2025
               </span>
             </div>
           )}

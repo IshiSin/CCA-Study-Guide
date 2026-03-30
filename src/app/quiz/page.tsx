@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { TerminalCard } from "@/components/ui/terminal-card"
 import { Brain, Trophy, Clock } from "lucide-react"
 import { domains, domainColorMap } from "@/content/domains"
+import { QuizPastScores } from "@/components/quiz/quiz-past-scores"
 
 export default function QuizPage() {
   return (
@@ -75,6 +76,8 @@ export default function QuizPage() {
           )
         })}
       </div>
+
+      <QuizPastScores />
     </div>
   )
 }

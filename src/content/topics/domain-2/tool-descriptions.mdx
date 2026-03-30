@@ -5,7 +5,7 @@ estimatedMinutes: 20
 domain: 2
 ---
 
-A tool description is not just documentation — it is **part of your prompt**. Claude reads tool descriptions as instructions to decide when and how to call each tool. A vague or incomplete description causes tool misuse or non-use, regardless of how well the underlying implementation works.
+A tool description is not just documentation — it is `part of your prompt`. Claude reads tool descriptions as instructions to decide when and how to call each tool. A vague or incomplete description causes tool misuse or non-use, regardless of how well the underlying implementation works.
 
 ## The Four-Part Description Contract
 
@@ -100,7 +100,7 @@ def search_products(
 ```
 
 <ExamTip>
-The exam tests whether you know that **"Do NOT use this tool to"** sections are just as important as "Use this when" sections. Without negative guidance, Claude may choose the wrong tool for an ambiguous query — for example, calling `search_products` when it should call `get_order_status` because both can "find information about products."
+The exam tests whether you know that `"Do NOT use this tool to"` sections are just as important as "Use this when" sections. Without negative guidance, Claude may choose the wrong tool for an ambiguous query — for example, calling `search_products` when it should call `get_order_status` because both can "find information about products."
 </ExamTip>
 
 ---
@@ -150,10 +150,10 @@ def create_invoice(
 
 ### Key Rules for Parameter Docs
 
-- **Always document the format** for dates, IDs, enums, and nested objects
-- **Explain where to get values** — if `customer_id` requires a prior lookup, say so
-- **Document defaults explicitly** — don't rely on the type hint alone
-- **Give examples** for non-obvious inputs
+- `Always document the format` for dates, IDs, enums, and nested objects
+- `Explain where to get values` — if `customer_id` requires a prior lookup, say so
+- `Document defaults explicitly` — don't rely on the type hint alone
+- `Give examples` for non-obvious inputs
 
 ---
 
@@ -322,7 +322,7 @@ def run_sql_query(sql: str) -> str:
 ```
 
 <ExamTip>
-Document both the **success shape** and the **error shape** in your return description. Claude needs to know how to detect errors in the response and decide whether to retry, report to the user, or try a different approach.
+Document both the `success shape` and the `error shape` in your return description. Claude needs to know how to detect errors in the response and decide whether to retry, report to the user, or try a different approach.
 </ExamTip>
 
 <KeyTakeaway>
