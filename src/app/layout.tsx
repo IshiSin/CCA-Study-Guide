@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/layout/sidebar"
 import { Header } from "@/components/layout/header"
 import { ThemeToggle } from "@/components/layout/theme-toggle"
 import { ChatPanel } from "@/components/layout/chat-panel"
+import { GoogleAnalytics } from "@next/third-parties/google"
 import "./globals.css"
 
 const spaceGrotesk = Space_Grotesk({ subsets: ["latin"], variable: "--font-body" })
@@ -45,6 +46,7 @@ export default function RootLayout({
           <ChatPanel />
         </ThemeProvider>
       </body>
+      <GoogleAnalytics gaId="G-TE120CHR4W" />
     </html>
   )
 }
