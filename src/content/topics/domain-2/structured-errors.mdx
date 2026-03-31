@@ -52,36 +52,31 @@ import json
 from enum import Enum
 
 class ErrorType(str, Enum):
-    NOT_FOUND = "not_found"
+    NOT_FOUND        = "not_found"
     PERMISSION_DENIED = "permission_denied"
-    INVALID_INPUT = "invalid_input"
-    TIMEOUT = "timeout"
-    QUOTA_EXCEEDED = "quota_exceeded"
+    INVALID_INPUT    = "invalid_input"
+    TIMEOUT          = "timeout"
+    QUOTA_EXCEEDED   = "quota_exceeded"
     EXTERNAL_SERVICE = "external_service_error"
-    CONFLICT = "conflict"
 
 def error_response(
     error_type: ErrorType,
     message: str,
     retryable: bool = False,
     suggestion: str | None = None,
-    details: dict | None = None,
 ) -> str:
-    """Return a structured JSON error that Claude can parse and act on."""
+    """Return a structured JSON error Claude can parse and act on."""
     payload = {
         "success": False,
         "error": {
             "type": error_type.value,
             "message": message,
-            "retryable": retryable,
+            "retryable": retryable,           # Claude uses this to decide retry vs. escalate
         }
     }
     if suggestion:
-        payload["error"]["suggestion"] = suggestion
-    if details:
-        payload["error"]["details"] = details
+        payload["error"]["suggestion"] = suggestion  # hint for Claude's next action
     return json.dumps(payload)
-
 
 def success_response(data: dict | list) -> str:
     return json.dumps({"success": True, "data": data})
@@ -92,55 +87,35 @@ def success_response(data: dict | list) -> str:
 ## Applying Structured Errors in a Tool
 
 ```python
-from anthropic.agents import tool
-
 @tool
 def get_customer(customer_id: str) -> str:
     """
     Fetch a customer record by ID.
-    Returns customer details or a structured error if not found.
-
-    Returns:
-        On success: {"success": true, "data": {"id": ..., "name": ..., "email": ...}}
-        On error: {"success": false, "error": {"type": ..., "message": ..., "retryable": ...}}
+    Returns: {"success": true, "data": {...}} or {"success": false, "error": {...}}
     """
-    # Validate input format
+    # Validate ID format before hitting the database
     if not customer_id.startswith("cust_"):
         return error_response(
             ErrorType.INVALID_INPUT,
-            f"Invalid customer ID format: '{customer_id}'. Must start with 'cust_'.",
+            f"Invalid ID format: '{customer_id}'. Must start with 'cust_'.",
             retryable=False,
-            suggestion="Use search_customers to find the correct ID by name or email."
+            suggestion="Use search_customers to find the correct ID."
         )
-
     try:
         customer = database.get_customer(customer_id)
-
         if customer is None:
             return error_response(
                 ErrorType.NOT_FOUND,
-                f"No customer found with ID '{customer_id}'.",
-                retryable=False,
+                f"No customer with ID '{customer_id}'.",
                 suggestion="Use search_customers to find the correct ID."
             )
-
         return success_response(customer.to_dict())
 
     except DatabaseTimeoutError:
-        return error_response(
-            ErrorType.TIMEOUT,
-            "Database query timed out after 10 seconds.",
-            retryable=True,
-            suggestion="Try again in a few seconds. If it persists, the query may need optimization."
-        )
+        return error_response(ErrorType.TIMEOUT, "Database timed out.", retryable=True)
 
     except PermissionError as e:
-        return error_response(
-            ErrorType.PERMISSION_DENIED,
-            str(e),
-            retryable=False,
-            suggestion="Check that the current user has access to customer records."
-        )
+        return error_response(ErrorType.PERMISSION_DENIED, str(e))
 ```
 
 <ExamTip>
@@ -155,6 +130,7 @@ In MCP servers, the protocol supports an explicit `isError` flag on tool results
 
 ```python
 from mcp import types
+import httpx, json
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
@@ -167,30 +143,18 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 return [types.TextContent(type="text", text=response.text)]
 
         except httpx.TimeoutException:
-            # isError=True signals this as a failed tool result
-            return [types.TextContent(
-                type="text",
-                text=json.dumps({
-                    "error": "Request timed out after 10 seconds",
-                    "error_type": "timeout",
-                    "retryable": True,
-                    "url": url
-                }),
-                # Note: isError is set on the ToolResult at the protocol level
-                # The SDK handles this automatically when you use error content
-            )]
+            # Transient — Claude can retry
+            return [types.TextContent(type="text", text=json.dumps({
+                "error": "Request timed out", "error_type": "timeout", "retryable": True
+            }))]
 
         except httpx.HTTPStatusError as e:
-            return [types.TextContent(
-                type="text",
-                text=json.dumps({
-                    "error": f"HTTP {e.response.status_code}: {e.response.reason_phrase}",
-                    "error_type": "external_service_error",
-                    "retryable": e.response.status_code >= 500,  # 5xx are retryable; 4xx are not
-                    "url": url,
-                    "status_code": e.response.status_code
-                })
-            )]
+            # 5xx = retryable (server issue); 4xx = not retryable (bad request)
+            return [types.TextContent(type="text", text=json.dumps({
+                "error": f"HTTP {e.response.status_code}",
+                "error_type": "external_service_error",
+                "retryable": e.response.status_code >= 500,
+            }))]
 ```
 
 ---
@@ -229,11 +193,7 @@ def run_subagent_with_error_handling(task: dict) -> dict:
     """Run a subagent and return a structured result the coordinator can parse."""
     try:
         result = subagent.run(task["description"])
-        return {
-            "task_id": task["id"],
-            "status": "success",
-            "result": result
-        }
+        return {"task_id": task["id"], "status": "success", "result": result}
     except Exception as e:
         return {
             "task_id": task["id"],
@@ -242,35 +202,26 @@ def run_subagent_with_error_handling(task: dict) -> dict:
                 "type": "subagent_error",
                 "message": str(e),
                 "retryable": is_retryable_error(e),
-                "task_description": task["description"][:200],
             }
         }
 
-
 def coordinator_aggregate(results: list[dict]) -> str:
-    """Coordinator handles partial failures gracefully."""
+    """Coordinator handles partial failures — continue with successes, report failures."""
     successes = [r for r in results if r["status"] == "success"]
-    failures = [r for r in results if r["status"] == "failed"]
+    failures  = [r for r in results if r["status"] == "failed"]
 
     if not successes:
-        # All subagents failed — cannot produce a useful result
-        error_summary = "; ".join(r["error"]["message"] for r in failures)
-        return json.dumps({
-            "success": False,
-            "error": f"All subtasks failed: {error_summary}"
-        })
+        # Everything failed — cannot produce a useful result
+        return json.dumps({"success": False, "error": "All subtasks failed"})
 
-    # Partial success — produce result from what succeeded, report failures
-    response = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=2048,
-        system="Synthesize available results. Note any missing data from failed tasks.",
-        messages=[{
-            "role": "user",
-            "content": f"Successes: {json.dumps(successes)}\nFailures: {json.dumps(failures)}"
-        }]
-    )
-    return response.content[0].text
+    # Partial success — synthesize available results and note gaps
+    summary = ", ".join(f["task_id"] for f in failures)
+    return json.dumps({
+        "success": True,
+        "results": [r["result"] for r in successes],
+        "partial": True,
+        "failed_tasks": summary,
+    })
 ```
 
 <AntiPatternCard

@@ -51,8 +51,6 @@ Every tool description should answer four questions:
 ## A Complete Tool Description Example
 
 ```python
-from anthropic.agents import tool
-
 @tool
 def search_products(
     query: str,
@@ -61,41 +59,20 @@ def search_products(
     in_stock_only: bool = False,
 ) -> str:
     """
-    Search the product catalog by keyword, optionally filtered by category and price.
+    Search the product catalog by keyword or partial SKU.
 
-    Use this tool when the user asks about:
-    - Product availability or pricing
-    - Finding products matching a description
-    - Browsing a product category
-
-    Do NOT use this tool to:
-    - Place orders (use place_order instead)
-    - Check order status (use get_order_status instead)
-    - Get product reviews (use get_reviews instead)
+    Use when: user asks about product availability, pricing, or specs.
+    Do NOT use to: place orders (use place_order), check status (use get_order_status).
 
     Args:
-        query: Search terms describing the product. Supports partial matches.
-               Examples: "wireless headphones", "size 10 running shoes", "SKU-4821"
-        category: Optional product category to restrict search.
-                  Valid values: "electronics", "clothing", "home", "sports", "books"
-                  Omit to search all categories.
-        max_price_usd: Optional upper price limit in USD. Omit for no price filter.
-        in_stock_only: If True, only return products currently in stock.
-                       Default False returns all products including backordered.
+        query: Search terms or partial SKU. Supports partial matches.
+        category: One of "electronics", "clothing", "home", "sports", "books". Omit for all.
+        max_price_usd: Upper price limit in USD. Omit for no filter.
+        in_stock_only: True = exclude backordered items. Default False.
 
-    Returns:
-        JSON array of matching products. Each product has:
-        - id (string): Unique product identifier
-        - name (string): Display name
-        - price_usd (float): Current price
-        - category (string): Product category
-        - in_stock (bool): Current availability
-        - description (string): Short product description
-        Empty array [] if no products match.
-
-    Limits: Maximum 50 results per call. Does not include discontinued products.
+    Returns: JSON array of products (id, name, price_usd, category, in_stock, description).
+             Empty array [] if no match. Max 50 results.
     """
-    # Implementation
     return '[]'
 ```
 
@@ -122,28 +99,16 @@ def create_invoice(
     Create a new invoice and send it to the customer.
 
     Args:
-        customer_id: The unique customer identifier from the CRM.
-                     Format: "cust_" followed by alphanumeric ID (e.g. "cust_a1b2c3").
-                     Obtain via get_customer or search_customers if you only have a name.
+        customer_id: CRM ID, format "cust_<alphanumeric>" (e.g. "cust_a1b2c3").
+                     Use get_customer or search_customers if you only have a name.
+        line_items: List of dicts, each with "description" (str), "quantity" (float),
+                    "unit_price_usd" (float). Example:
+                    [{"description": "Consulting", "quantity": 3, "unit_price_usd": 150.0}]
+        due_date: Payment due date as "YYYY-MM-DD". Must be today or future.
+        currency: ISO 4217 code. Supported: "USD", "EUR", "GBP", "CAD", "AUD".
+        notes: Optional invoice notes. Max 500 characters.
 
-        line_items: List of items to invoice. Each item must be a dict with:
-                    - "description" (str): What was provided — be specific
-                    - "quantity" (int or float): Amount (e.g. 2 for 2 units, 1.5 for 1.5 hours)
-                    - "unit_price_usd" (float): Price per unit in USD
-                    Example: [{"description": "Consulting hours", "quantity": 3, "unit_price_usd": 150.0}]
-
-        due_date: Payment due date in ISO 8601 format: "YYYY-MM-DD".
-                  Common values: 30 days net = today + 30 days.
-                  Must be today or a future date.
-
-        currency: Three-letter ISO 4217 currency code. Default "USD".
-                  Supported: "USD", "EUR", "GBP", "CAD", "AUD".
-
-        notes: Optional free-text notes shown on the invoice (e.g. payment instructions,
-               project reference number). Max 500 characters.
-
-    Returns:
-        JSON with invoice_id, invoice_url (shareable link), and total_amount_usd.
+    Returns: JSON with invoice_id, invoice_url, and total_amount_usd.
     """
     pass
 ```
@@ -167,30 +132,23 @@ def get_product(product_id: str) -> str:
     """
     Fetch full details for a single product by its exact ID.
 
-    Use this when you already have a product_id and need complete details
+    Use when you already have a product_id and need complete details
     (specs, all images, full description, pricing history).
-
-    Do NOT use this to search for products — use search_products instead.
-    The product_id must be an exact match (e.g. "prod_xyz789").
-    Searching by name will return an error.
+    Do NOT use to search — use search_products for that.
 
     Returns: Full product object with all fields including specs and images.
     """
-    pass
+    pass  # product_id must be exact — e.g. "prod_xyz789"
 
 @tool
 def search_products(query: str) -> str:
     """
     Search for products by name, description, or partial SKU.
 
-    Use this when you have a description or partial identifier and need
-    to find the right product. Returns a list of matching products with
-    basic fields (id, name, price, in_stock).
+    Use when you have a description or partial identifier.
+    Do NOT use when you have an exact product_id — use get_product instead.
 
-    Do NOT use this when you have an exact product_id — use get_product instead,
-    which is faster and returns more complete data.
-
-    Returns: JSON array of products (up to 50). Each item has id, name, price_usd, in_stock.
+    Returns: JSON array (up to 50) with id, name, price_usd, in_stock.
     """
     pass
 ```
@@ -297,26 +255,18 @@ Claude uses the return description to parse and reason about the response. Be pr
 @tool
 def run_sql_query(sql: str) -> str:
     """
-    Execute a read-only SQL SELECT query against the analytics database.
+    Execute a read-only SQL SELECT against the analytics database.
 
-    Use for: aggregate statistics, user counts, revenue reports, trend analysis.
+    Use for: aggregate stats, user counts, revenue reports, trend analysis.
     Do NOT use for: INSERT, UPDATE, DELETE — use data_write_tool for mutations.
 
     Args:
-        sql: A valid PostgreSQL SELECT statement. Must not contain
-             INSERT, UPDATE, DELETE, DROP, CREATE, or TRUNCATE.
+        sql: A valid PostgreSQL SELECT. No INSERT/UPDATE/DELETE/DROP allowed.
              Max 10,000 rows returned.
 
     Returns:
-        On success: JSON object with:
-        - "columns": list of column names in result order
-        - "rows": list of row arrays (each row matches column order)
-        - "row_count": total rows returned
-        Example: {"columns": ["date", "revenue"], "rows": [["2024-01", 50000]], "row_count": 1}
-
-        On error: JSON object with:
-        - "error": string describing what went wrong
-        - "error_type": one of "syntax_error", "permission_denied", "timeout"
+        Success: {"columns": [...], "rows": [[...], ...], "row_count": N}
+        Error:   {"error": "...", "error_type": "syntax_error"|"permission_denied"|"timeout"}
     """
     pass
 ```

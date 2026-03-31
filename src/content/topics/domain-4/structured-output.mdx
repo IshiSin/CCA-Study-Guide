@@ -24,74 +24,40 @@ The solution is to use the API's structured mechanisms rather than relying on pr
 The most reliable way to get structured output is to define a tool with a JSON Schema and have Claude "call" it. This forces the output to conform to the schema:
 
 ```python
-import anthropic
-import json
-
+import anthropic, json
 client = anthropic.Anthropic()
 
-# Define the tool with a JSON Schema
-tools = [
-    {
-        "name": "extract_contract_metadata",
-        "description": "Extract structured metadata from a contract document. Call this tool once with all extracted fields.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "party_a": {
-                    "type": "string",
-                    "description": "Name of the first contracting party"
-                },
-                "party_b": {
-                    "type": "string",
-                    "description": "Name of the second contracting party"
-                },
-                "effective_date": {
-                    "type": "string",
-                    "description": "Contract start date in ISO 8601 format (YYYY-MM-DD)"
-                },
-                "duration_months": {
-                    "type": "integer",
-                    "description": "Contract duration in months"
-                },
-                "total_value_usd": {
-                    "type": "number",
-                    "description": "Total contract value in USD"
-                },
-                "contract_type": {
-                    "type": "string",
-                    "enum": ["service", "license", "employment", "nda", "other"],
-                    "description": "Category of contract"
-                },
-                "auto_renews": {
-                    "type": "boolean",
-                    "description": "Whether the contract auto-renews"
-                }
+tools = [{
+    "name": "extract_contract_metadata",
+    "description": "Extract structured metadata from a contract. Call once with all fields.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "party_a":        {"type": "string", "description": "First contracting party"},
+            "party_b":        {"type": "string", "description": "Second contracting party"},
+            "effective_date": {"type": "string", "description": "Start date, ISO 8601 (YYYY-MM-DD)"},
+            "duration_months":{"type": "integer","description": "Contract length in months"},
+            "total_value_usd":{"type": "number", "description": "Total value in USD"},
+            "contract_type":  {
+                "type": "string",
+                "enum": ["service", "license", "employment", "nda", "other"],  # prevents invented values
             },
-            "required": ["party_a", "party_b", "effective_date", "contract_type"]
-        }
+            "auto_renews":    {"type": "boolean","description": "Whether the contract auto-renews"},
+        },
+        "required": ["party_a", "party_b", "effective_date", "contract_type"]
     }
-]
+}]
 
 response = client.messages.create(
     model="claude-opus-4-6",
     max_tokens=1024,
     tools=tools,
-    # Force Claude to use the tool rather than respond in prose
-    tool_choice={"type": "any"},
-    messages=[
-        {
-            "role": "user",
-            "content": f"Extract the metadata from this contract:\n\n{contract_text}"
-        }
-    ]
+    tool_choice={"type": "any"},   # force Claude to call the tool, not respond in prose
+    messages=[{"role": "user", "content": f"Extract metadata:\n\n{contract_text}"}]
 )
 
-# Parse the tool call input
-tool_use_block = next(
-    block for block in response.content
-    if block.type == "tool_use"
-)
-extracted = tool_use_block.input  # Already a Python dict — no json.loads() needed
+tool_use_block = next(b for b in response.content if b.type == "tool_use")
+extracted = tool_use_block.input   # already a Python dict — no json.loads() needed
 ```
 
 <ExamTip>
@@ -109,13 +75,13 @@ The quality of your schema determines the quality of Claude's output. Key schema
 Claude reads descriptions to understand how to fill each field. Descriptions are not optional:
 
 ```python
-# Weak schema — Claude has to guess intent
+# Weak — Claude guesses format (could return "Jan 1, 2025", "2025/01/01", etc.)
 "start_date": {"type": "string"}
 
-# Strong schema — Claude knows exactly what to produce
+# Strong — description specifies format and edge case handling
 "start_date": {
     "type": "string",
-    "description": "Contract start date in ISO 8601 format (YYYY-MM-DD). If only a month/year is specified, use the first of the month."
+    "description": "Contract start date as YYYY-MM-DD. If only month/year given, use the 1st."
 }
 ```
 
@@ -124,8 +90,8 @@ Claude reads descriptions to understand how to fill each field. Descriptions are
 ```python
 "priority": {
     "type": "string",
-    "enum": ["critical", "high", "medium", "low"],
-    "description": "Priority level of the issue"
+    "enum": ["critical", "high", "medium", "low"],  # without enum, Claude invents "urgent", "p0", etc.
+    "description": "Priority level"
 }
 ```
 
@@ -137,12 +103,12 @@ Enums prevent Claude from inventing values like "urgent", "p0", or "MEDIUM".
 {
     "type": "object",
     "properties": {
-        "issue_id": {"type": "string"},       # always present
-        "title": {"type": "string"},           # always present
-        "assignee": {"type": "string"},        # may not exist
-        "due_date": {"type": "string"},        # may not exist
+        "issue_id": {"type": "string"},   # always in the data
+        "title":    {"type": "string"},   # always in the data
+        "assignee": {"type": "string"},   # may not be set
+        "due_date": {"type": "string"},   # may not be set
     },
-    "required": ["issue_id", "title"]          # optional fields may be omitted
+    "required": ["issue_id", "title"]    # optional fields can be omitted by Claude
 }
 ```
 
@@ -170,27 +136,23 @@ When you cannot use the tools API (streaming contexts, some integrations), direc
 
 ```python
 system = """You are a data extraction assistant.
+IMPORTANT: Return valid JSON only. No text before or after. No markdown fences.
 
-IMPORTANT: Your response must be valid JSON only. No text before or after
-the JSON object. No markdown code fences. No explanation.
-
-Use exactly this schema:
+Schema:
 {
   "sentiment": "positive" | "negative" | "neutral",
-  "confidence": 0.0-1.0,
+  "confidence": 0.0–1.0,
   "key_topics": ["string"],
   "requires_response": true | false
 }"""
 
 response = client.messages.create(
-    model="claude-opus-4-6",
-    max_tokens=512,
+    model="claude-opus-4-6", max_tokens=512,
     system=system,
     messages=[{"role": "user", "content": customer_message}]
 )
 
-import json
-data = json.loads(response.content[0].text)
+data = json.loads(response.content[0].text)  # may fail — wrap in try/except in production
 ```
 
 <Callout variant="info" title="Add an assistant prefill to guarantee JSON starts">
@@ -267,34 +229,32 @@ Use `tool_use` for production extraction pipelines. Use direct JSON prompting fo
 To extract a list of structured items, wrap them in a top-level array schema:
 
 ```python
-tools = [
-    {
-        "name": "extract_line_items",
-        "description": "Extract all line items from the invoice. Return an array with one object per line item.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "line_items": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "description": {"type": "string"},
-                            "quantity": {"type": "number"},
-                            "unit_price": {"type": "number"},
-                            "total": {"type": "number"}
-                        },
-                        "required": ["description", "quantity", "unit_price", "total"]
-                    }
-                },
-                "subtotal": {"type": "number"},
-                "tax": {"type": "number"},
-                "total": {"type": "number"}
+tools = [{
+    "name": "extract_line_items",
+    "description": "Extract all line items from the invoice. Return one object per item.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "line_items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "description": {"type": "string"},
+                        "quantity":    {"type": "number"},
+                        "unit_price":  {"type": "number"},
+                        "total":       {"type": "number"},  # Claude should compute qty × unit_price
+                    },
+                    "required": ["description", "quantity", "unit_price", "total"]
+                }
             },
-            "required": ["line_items", "total"]
-        }
+            "subtotal": {"type": "number"},
+            "tax":      {"type": "number"},
+            "total":    {"type": "number"},   # grand total including tax
+        },
+        "required": ["line_items", "total"]
     }
-]
+}]
 ```
 
 <AntiPatternCard

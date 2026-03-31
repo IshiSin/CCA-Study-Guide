@@ -10,19 +10,16 @@ domain: 4
 ## Zero-Shot vs. Few-Shot
 
 ```python
-# Zero-shot: instruction only
-messages = [
-  {
+# Zero-shot: instruction only — works for clear, well-defined tasks
+messages_zero_shot = [{
     "role": "user",
-    "content": "Classify the sentiment of this review as positive, negative, or neutral: 'The product works but the packaging was damaged.'"
-  }
-]
+    "content": "Classify as positive, negative, or neutral: 'The product works but packaging was damaged.'"
+}]
 
-# Few-shot: instruction + examples
-messages = [
-  {
+# Few-shot: instruction + examples — better when format precision or edge cases matter
+messages_few_shot = [{
     "role": "user",
-    "content": """Classify the sentiment of each review as positive, negative, or neutral.
+    "content": """Classify each review as positive, negative, or neutral.
 
 Review: "Absolutely love this product, exceeded expectations!"
 Sentiment: positive
@@ -34,9 +31,8 @@ Review: "It arrived on time and does what it says."
 Sentiment: neutral
 
 Review: "The product works but the packaging was damaged."
-Sentiment:"""
-  }
-]
+Sentiment:"""   # Claude completes from here
+}]
 ```
 
 The few-shot version eliminates ambiguity about the output format and gives Claude calibration examples for the "neutral" class — which is often the hardest to classify.
@@ -53,7 +49,6 @@ Examples belong in the `human turn`, not the system prompt. This is an important
 
 ```python
 import anthropic
-
 client = anthropic.Anthropic()
 
 response = client.messages.create(
@@ -61,15 +56,15 @@ response = client.messages.create(
     max_tokens=256,
     system="You are a sentiment classifier. Classify reviews as positive, negative, or neutral.",
     messages=[
-        # Few-shot examples as alternating human/assistant turns
-        {"role": "user", "content": "Review: 'Absolutely love this!'"},
+        # Examples as alternating user/assistant turns — more reliable than inline text blocks
+        {"role": "user",      "content": "Review: 'Absolutely love this!'"},
         {"role": "assistant", "content": "positive"},
-        {"role": "user", "content": "Review: 'Broke after one day.'"},
+        {"role": "user",      "content": "Review: 'Broke after one day.'"},
         {"role": "assistant", "content": "negative"},
-        {"role": "user", "content": "Review: 'Works as described.'"},
+        {"role": "user",      "content": "Review: 'Works as described.'"},
         {"role": "assistant", "content": "neutral"},
-        # Actual request
-        {"role": "user", "content": "Review: 'The product works but packaging was damaged.'"},
+        # The actual request — must come last
+        {"role": "user",      "content": "Review: 'The product works but packaging was damaged.'"},
     ],
 )
 ```
@@ -85,17 +80,17 @@ Not all examples are equal. Select examples that:
 ### 1. Cover the edge cases, not the obvious cases
 
 ```python
-# Weak examples — all clearly positive/negative
-{"role": "user", "content": "Review: 'Fantastic quality!'"},
+# Weak: obvious cases don't teach Claude anything new
+{"role": "user",      "content": "Review: 'Fantastic quality!'"},
 {"role": "assistant", "content": "positive"},
-{"role": "user", "content": "Review: 'Terrible, don't buy.'"},
+{"role": "user",      "content": "Review: 'Terrible, don't buy.'"},
 {"role": "assistant", "content": "negative"},
 
-# Strong examples — show the ambiguous cases
-{"role": "user", "content": "Review: 'Shipping was slow but product is great.'"},
-{"role": "assistant", "content": "positive"},  # Mixed, but net positive
-{"role": "user", "content": "Review: 'Five stars! Though the color was slightly off.'"},
-{"role": "assistant", "content": "positive"},  # Complaint doesn't override 5 stars
+# Strong: show the ambiguous cases Claude needs guidance on
+{"role": "user",      "content": "Review: 'Shipping was slow but product is great.'"},
+{"role": "assistant", "content": "positive"},    # mixed, but net positive
+{"role": "user",      "content": "Review: 'Five stars! Though the color was slightly off.'"},
+{"role": "assistant", "content": "positive"},    # minor complaint doesn't override 5 stars
 ```
 
 ### 2. Match the distribution of real inputs
@@ -125,10 +120,10 @@ Every example must produce output in exactly the format you want. Any deviation 
 Few-shot examples are especially powerful for teaching Claude a JSON schema when you cannot use `tool_use` (see Structured Output):
 
 ```python
-system = """Extract contract metadata and return valid JSON only.
-No text outside the JSON object."""
+system = "Extract contract metadata and return valid JSON only. No text outside the JSON."
 
 messages = [
+    # Example: teaches Claude the schema AND how to derive fields (e.g. monthly_value)
     {
         "role": "user",
         "content": "Contract: 'This agreement between Acme Corp and Widget LLC, effective January 1 2025, for 12 months at $5,000/month...'"
@@ -137,14 +132,7 @@ messages = [
         "role": "assistant",
         "content": '{"party_a": "Acme Corp", "party_b": "Widget LLC", "effective_date": "2025-01-01", "duration_months": 12, "monthly_value": 5000}'
     },
-    {
-        "role": "user",
-        "content": "Contract: 'Service agreement between DataFlow Inc and LogiSoft, starting March 15 2025, annual contract worth $120,000...'"
-    },
-    {
-        "role": "assistant",
-        "content": '{"party_a": "DataFlow Inc", "party_b": "LogiSoft", "effective_date": "2025-03-15", "duration_months": 12, "monthly_value": 10000}'
-    },
+    # Actual request
     {
         "role": "user",
         "content": f"Contract: '{actual_contract_text}'"
@@ -164,24 +152,17 @@ For complex reasoning tasks, show the reasoning chain in your examples:
 messages = [
     {
         "role": "user",
-        "content": "A train leaves at 9:00 AM traveling at 60 mph. Another train leaves at 10:00 AM from the same station at 90 mph in the same direction. When does the second train catch the first?"
+        "content": "A train leaves at 9:00 AM at 60 mph. Another leaves at 10:00 AM at 90 mph in the same direction. When does the second catch the first?"
     },
     {
         "role": "assistant",
-        "content": """Let me work through this step by step.
-
-At 10:00 AM (when train 2 departs):
-- Train 1 has been traveling for 1 hour at 60 mph
-- Train 1 is 60 miles ahead
-
-Train 2 gains on Train 1 at: 90 - 60 = 30 mph
-
-Time for Train 2 to close 60 miles at 30 mph:
-60 ÷ 30 = 2 hours
-
-Train 2 catches Train 1 at 10:00 AM + 2 hours = 12:00 PM"""
+        # Show the reasoning style you want Claude to replicate on real questions
+        "content": """At 10:00 AM (when train 2 departs), train 1 is 60 miles ahead.
+Train 2 gains at 90 - 60 = 30 mph.
+Time to close 60 miles: 60 ÷ 30 = 2 hours.
+Train 2 catches train 1 at 12:00 PM."""
     },
-    # ... actual question
+    # ... actual question follows
 ]
 ```
 

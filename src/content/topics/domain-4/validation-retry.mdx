@@ -17,8 +17,7 @@ Validation has two stages:
 Both can fail independently. A string `"true"` parses fine but may fail if a boolean was required:
 
 ```python
-import json
-import anthropic
+import json, anthropic
 from pydantic import BaseModel, ValidationError
 from typing import Literal
 
@@ -31,25 +30,23 @@ class SentimentResult(BaseModel):
 
 def classify_message(message: str) -> SentimentResult:
     response = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=256,
+        model="claude-opus-4-6", max_tokens=256,
         system="Classify the message. Return valid JSON only matching the specified schema.",
         messages=[{"role": "user", "content": message}]
     )
-
     raw = response.content[0].text
 
-    # Stage 1: Parse
+    # Stage 1: parse — can the text be deserialized?
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise ValueError(f"Claude returned invalid JSON: {e}\n\nRaw output: {raw}")
+        raise ValueError(f"Invalid JSON: {e}\n\nRaw: {raw}")
 
-    # Stage 2: Validate
+    # Stage 2: validate — does it match the expected schema?
     try:
         return SentimentResult(**data)
     except ValidationError as e:
-        raise ValueError(f"Claude's JSON doesn't match schema: {e}\n\nData: {data}")
+        raise ValueError(f"Schema mismatch: {e}\n\nData: {data}")
 ```
 
 Using Pydantic for validation catches type mismatches, missing fields, and constraint violations with structured error messages that can be fed back to Claude.
@@ -61,62 +58,29 @@ Using Pydantic for validation catches type mismatches, missing fields, and const
 The most effective retry strategy is to include the error in the next request. Claude can self-correct when it understands what went wrong:
 
 ```python
-import json
-import anthropic
-from pydantic import BaseModel, ValidationError
-
-client = anthropic.Anthropic()
-
-def extract_with_retry(
-    document: str,
-    schema_description: str,
-    max_retries: int = 3
-) -> dict:
-    messages = [
-        {
-            "role": "user",
-            "content": f"Extract data from this document:\n\n{document}"
-        }
-    ]
-
-    last_error = None
+def extract_with_retry(document: str, schema_description: str, max_retries: int = 3) -> dict:
+    messages = [{"role": "user", "content": f"Extract data from:\n\n{document}"}]
 
     for attempt in range(max_retries):
         response = client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=1024,
-            system=f"""Extract structured data and return valid JSON only.
-Schema: {schema_description}
-No text outside the JSON object.""",
+            model="claude-opus-4-6", max_tokens=1024,
+            system=f"Extract structured data. Return valid JSON only.\nSchema: {schema_description}",
             messages=messages
         )
+        raw = response.content[0].text
+        messages.append({"role": "assistant", "content": raw})  # keep Claude's output in context
 
-        raw_output = response.content[0].text
-
-        # Append Claude's response to conversation
-        messages.append({"role": "assistant", "content": raw_output})
-
-        # Try to parse
         try:
-            data = json.loads(raw_output)
-            return data  # Success
+            return json.loads(raw)   # success
+
         except json.JSONDecodeError as e:
-            last_error = str(e)
-            # Tell Claude exactly what was wrong
+            # Tell Claude exactly what was wrong before retrying
             messages.append({
                 "role": "user",
-                "content": f"""Your response was not valid JSON. Error: {last_error}
-
-Your output was:
-{raw_output}
-
-Please return ONLY the JSON object with no other text."""
+                "content": f"JSON parse error: {e}\n\nYour output:\n{raw}\n\nReturn valid JSON only."
             })
 
-    raise RuntimeError(
-        f"Failed to get valid JSON after {max_retries} attempts. "
-        f"Last error: {last_error}"
-    )
+    raise RuntimeError(f"Failed after {max_retries} attempts")
 ```
 
 <ExamTip>
@@ -137,55 +101,31 @@ class InvoiceData(BaseModel):
     invoice_number: str
     amount: float
     currency: str = "USD"
-    due_date: str  # ISO 8601
+    due_date: str   # YYYY-MM-DD
 
 def extract_invoice_with_retry(text: str, max_retries: int = 3) -> InvoiceData:
     messages = [{"role": "user", "content": f"Extract invoice data:\n\n{text}"}]
 
     for attempt in range(max_retries):
         response = client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=512,
-            system="""Return JSON only. Schema:
-{
-  "vendor": string,
-  "invoice_number": string,
-  "amount": number (not string),
-  "currency": string (3-letter ISO code),
-  "due_date": string (YYYY-MM-DD format)
-}""",
+            model="claude-opus-4-6", max_tokens=512,
+            system='Return JSON only: {"vendor": str, "invoice_number": str, "amount": number, "currency": str, "due_date": "YYYY-MM-DD"}',
             messages=messages
         )
-
         raw = response.content[0].text
         messages.append({"role": "assistant", "content": raw})
 
         try:
-            data = json.loads(raw)
-            result = InvoiceData(**data)
-            return result
+            return InvoiceData(**json.loads(raw))   # parse + validate in one step
 
-        except json.JSONDecodeError as parse_error:
-            error_msg = f"JSON parse error: {parse_error}"
-        except ValidationError as val_error:
-            # Pydantic gives specific field-level errors
-            error_msg = f"Schema validation errors:\n{val_error}"
+        except (json.JSONDecodeError, ValidationError) as e:
+            # Feed the specific error back so Claude knows what to fix
+            messages.append({
+                "role": "user",
+                "content": f"Validation failed: {e}\n\nYour output:\n{raw}\n\nCorrect and return JSON only."
+            })
 
-        messages.append({
-            "role": "user",
-            "content": f"""Your output failed validation. Errors:
-
-{error_msg}
-
-Your output was:
-```
-{raw}
-```
-
-Please correct these specific errors and return valid JSON only."""
-        })
-
-    raise RuntimeError(f"Could not extract valid invoice data after {max_retries} attempts")
+    raise RuntimeError(f"Could not extract valid invoice after {max_retries} attempts")
 ```
 
 ---
@@ -195,39 +135,28 @@ Please correct these specific errors and return valid JSON only."""
 Retry for validation failures is different from retry for API errors. For `429 Too Many Requests` and `529 Overloaded` errors, use exponential backoff with jitter:
 
 ```python
-import time
-import random
-import anthropic
+import time, random, anthropic
 
 client = anthropic.Anthropic()
 
-def call_with_backoff(
-    messages: list,
-    max_retries: int = 5,
-    base_delay: float = 1.0,
-    max_delay: float = 60.0
-) -> anthropic.types.Message:
+def call_with_backoff(messages: list, max_retries: int = 5, base_delay: float = 1.0) -> anthropic.types.Message:
     for attempt in range(max_retries):
         try:
             return client.messages.create(
-                model="claude-opus-4-6",
-                max_tokens=1024,
-                messages=messages
+                model="claude-opus-4-6", max_tokens=1024, messages=messages
             )
         except anthropic.RateLimitError:
             if attempt == max_retries - 1:
                 raise
-            # Exponential backoff with jitter
-            delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+            # Exponential backoff with jitter — avoids thundering herd
+            delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), 60.0)
             time.sleep(delay)
         except anthropic.APIStatusError as e:
-            if e.status_code == 529:  # Overloaded
-                if attempt == max_retries - 1:
-                    raise
-                delay = min(base_delay * (2 ** attempt), max_delay)
-                time.sleep(delay)
+            if e.status_code == 529:   # Overloaded — wait and retry
+                if attempt == max_retries - 1: raise
+                time.sleep(min(base_delay * (2 ** attempt), 60.0))
             else:
-                raise  # Don't retry other errors
+                raise   # 4xx errors are not retryable
 ```
 
 <Callout variant="info" title="Validation retry vs. API error retry are different patterns">
@@ -241,11 +170,11 @@ Validation retries extend the conversation (append error messages). API error re
 Always set a hard ceiling on retries. Without it, a bad schema or an unusual input can trigger infinite loops:
 
 ```python
-MAX_VALIDATION_RETRIES = 3   # For schema/parse failures
-MAX_API_RETRIES = 5          # For rate limits / transient errors
+MAX_VALIDATION_RETRIES = 3   # parse/schema failures: extend the conversation
+MAX_API_RETRIES        = 5   # rate limits / overload: wait and repeat same request
 
-# After max retries, raise — don't silently return None or {}
-# Callers need to know extraction failed
+# After exhausting retries, raise — don't return None or {}
+# Callers need to know extraction failed, not silently get empty data
 raise ExtractionError(
     f"Could not extract valid output after {MAX_VALIDATION_RETRIES} attempts",
     last_raw_output=raw,
@@ -256,23 +185,14 @@ raise ExtractionError(
 ### What to do on permanent failure
 
 ```python
-# Option 1: Raise and let the caller handle
+# Option 1: raise — let the caller decide how to handle
 raise ExtractionError(...)
 
-# Option 2: Return a sentinel with error info (for batch pipelines)
-return ExtractionResult(
-    success=False,
-    error=error_msg,
-    raw_output=raw,
-    data=None
-)
+# Option 2: return a sentinel — best for batch pipelines (don't abort on one failure)
+return ExtractionResult(success=False, error=error_msg, raw_output=raw, data=None)
 
-# Option 3: Queue for human review
-send_to_human_review_queue(
-    document=document,
-    error=error_msg,
-    raw_output=raw
-)
+# Option 3: queue for human review — best when data quality is critical
+send_to_human_review_queue(document=document, error=error_msg, raw_output=raw)
 ```
 
 For batch pipelines processing thousands of documents, Option 2 or 3 is usually correct — you want the pipeline to continue and collect failures for later analysis, not abort on the first bad document.
@@ -289,43 +209,34 @@ def extract_with_tool_retry(document: str, max_retries: int = 3) -> dict:
 
     for attempt in range(max_retries):
         response = client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=1024,
-            tools=extraction_tools,
-            tool_choice={"type": "any"},
+            model="claude-opus-4-6", max_tokens=1024,
+            tools=extraction_tools, tool_choice={"type": "any"},
             messages=messages
         )
 
-        # Find the tool use block
-        tool_use = next(
-            (b for b in response.content if b.type == "tool_use"), None
-        )
+        tool_use = next((b for b in response.content if b.type == "tool_use"), None)
+
         if not tool_use:
+            # Claude didn't call the tool — tell it to
             messages.append({"role": "assistant", "content": response.content})
-            messages.append({
-                "role": "user",
-                "content": [{"type": "tool_result", "tool_use_id": "none", "content": "No tool was called. Please call the extraction tool."}]
-            })
+            messages.append({"role": "user", "content": [{
+                "type": "tool_result", "tool_use_id": "none",
+                "content": "No tool was called. Please call the extraction tool."
+            }]})
             continue
 
-        # Validate the extracted data
         try:
-            validated = validate_extraction(tool_use.input)
-            return validated
+            return validate_extraction(tool_use.input)   # validate the extracted dict
+
         except ValueError as e:
-            # Append tool result with error — this is the correct way to provide feedback
+            # Feed back as a tool_result with is_error=True — protocol-correct way to signal failure
             messages.append({"role": "assistant", "content": response.content})
-            messages.append({
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_use.id,
-                        "content": f"Validation failed: {str(e)}. Please re-extract with corrections.",
-                        "is_error": True
-                    }
-                ]
-            })
+            messages.append({"role": "user", "content": [{
+                "type": "tool_result",
+                "tool_use_id": tool_use.id,
+                "content": f"Validation failed: {e}. Re-extract with corrections.",
+                "is_error": True
+            }]})
 
     raise RuntimeError(f"Extraction failed after {max_retries} attempts")
 ```

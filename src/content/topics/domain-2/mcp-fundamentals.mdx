@@ -1,347 +1,351 @@
 ---
 title: "MCP Fundamentals"
-description: "What the Model Context Protocol is, how JSON-RPC transport works, and the three core primitives: tools, resources, and prompts."
-estimatedMinutes: 25
+description: "What the Model Context Protocol is, how to build a server, and the three core primitives: tools, resources, and prompts."
+estimatedMinutes: 20
 domain: 2
 ---
 
-The `Model Context Protocol (MCP)` is an open standard that defines how AI models communicate with external systems. Rather than every integration being custom-coded, MCP provides a uniform protocol: the host (Claude) speaks MCP, and any compliant server plugs in automatically.
+The `Model Context Protocol (MCP)` is how Claude connects to external systems — databases, APIs, filesystems, anything. Instead of hard-coding integrations, you write an MCP server once and Claude can use it anywhere.
 
-## Why MCP Exists
+**The mental model:** Claude is a client. Your MCP server is a plugin. Claude calls your server's tools the same way it calls built-in tools — by name, with arguments, expecting a result.
 
-Before MCP, every Claude integration required bespoke tool definitions, custom serialization, and hand-written dispatch logic. MCP standardizes all of this:
+---
 
-<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
-  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">Without MCP vs. With MCP</div>
-  <table className="w-full">
-    <thead>
-      <tr className="bg-purple-950/40 border-b border-border">
-        <th className="px-4 py-3 text-left font-semibold text-foreground">Without MCP</th>
-        <th className="px-4 py-3 text-left font-semibold text-foreground">With MCP</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr className="border-b border-border hover:bg-muted/20">
-        <td className="px-4 py-3 text-muted-foreground font-medium">Custom tool schema per integration</td>
-        <td className="px-4 py-3 text-muted-foreground">Uniform <code className="font-mono text-xs bg-muted px-1 rounded">tools/list</code> discovery</td>
-      </tr>
-      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
-        <td className="px-4 py-3 text-muted-foreground font-medium">Ad-hoc serialization format</td>
-        <td className="px-4 py-3 text-muted-foreground">JSON-RPC 2.0 everywhere</td>
-      </tr>
-      <tr className="border-b border-border hover:bg-muted/20">
-        <td className="px-4 py-3 text-muted-foreground font-medium">No capability negotiation</td>
-        <td className="px-4 py-3 text-muted-foreground"><code className="font-mono text-xs bg-muted px-1 rounded">initialize</code> handshake declares features</td>
-      </tr>
-      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
-        <td className="px-4 py-3 text-muted-foreground font-medium">Single-process only</td>
-        <td className="px-4 py-3 text-muted-foreground">Stdio, HTTP/SSE, or custom transports</td>
-      </tr>
-      <tr className="hover:bg-muted/20">
-        <td className="px-4 py-3 text-muted-foreground font-medium">No resource access pattern</td>
-        <td className="px-4 py-3 text-muted-foreground">First-class <code className="font-mono text-xs bg-muted px-1 rounded">resources</code> primitive</td>
-      </tr>
-    </tbody>
-  </table>
-</div>
+## Build a Minimal MCP Server
+
+This is a complete, working MCP server in Python. It exposes one tool: `get_weather`.
+
+```python
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp import types
+
+app = Server("weather-server")  # give your server a name
+
+# Claude calls this to discover what tools exist
+@app.list_tools()
+async def list_tools() -> list[types.Tool]:
+    return [
+        types.Tool(
+            name="get_weather",
+            description="Get current weather for a city.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string", "description": "City name"},
+                },
+                "required": ["city"],  # Claude must supply this argument
+            },
+        )
+    ]
+
+# Claude calls this when it decides to use a tool
+@app.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    if name == "get_weather":
+        city = arguments["city"]
+        # real implementation would call a weather API
+        return [types.TextContent(type="text", text=f"72°F, sunny in {city}")]
+    raise ValueError(f"Unknown tool: {name}")
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(stdio_server(app))  # communicate via stdin/stdout
+```
+
+Install and run:
+
+```bash
+pip install mcp
+python weather_server.py
+```
+
+---
+
+## Connect It to Claude Code
+
+Add the server to `~/.claude/claude_desktop_config.json` (or `.mcp.json` in your project):
+
+```json
+{
+  "mcpServers": {
+    "weather": {                              // name shown in Claude Code
+      "command": "python",                   // how to start the server
+      "args": ["/path/to/weather_server.py"] // script to run
+    }
+  }
+}
+```
+
+That's it. Claude Code starts the process, discovers the tools via `tools/list`, and Claude can now call `get_weather` in any conversation.
 
 ---
 
 ## The Three Primitives
 
-MCP defines exactly three things a server can expose:
+Every MCP server exposes some combination of these:
 
 <div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
-  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">MCP Server Primitives</div>
   <table className="w-full">
     <thead>
       <tr className="bg-purple-950/40 border-b border-border">
         <th className="px-4 py-3 text-left font-mono text-purple-400 font-semibold w-1/5">Primitive</th>
-        <th className="px-4 py-3 text-left font-semibold text-foreground w-2/5">Purpose</th>
-        <th className="px-4 py-3 text-left font-semibold text-foreground w-2/5">Example</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-2/5">What it does</th>
+        <th className="px-4 py-3 text-left font-semibold text-foreground w-2/5">Real example</th>
       </tr>
     </thead>
     <tbody>
       <tr className="border-b border-border hover:bg-muted/20">
         <td className="px-4 py-3 font-mono text-purple-400 font-semibold">tools</td>
-        <td className="px-4 py-3 text-muted-foreground">Actions Claude can invoke — have side effects</td>
+        <td className="px-4 py-3 text-muted-foreground">Actions — can write, mutate, call APIs</td>
         <td className="px-4 py-3 font-mono text-muted-foreground text-xs">create_issue, send_email, run_query</td>
       </tr>
       <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
         <td className="px-4 py-3 font-mono text-purple-400 font-semibold">resources</td>
-        <td className="px-4 py-3 text-muted-foreground">Read-only data Claude can fetch into context</td>
-        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">file://readme.md, db://users/123</td>
+        <td className="px-4 py-3 text-muted-foreground">Read-only data loaded into Claude's context</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">file://readme.md, db://schema</td>
       </tr>
       <tr className="hover:bg-muted/20">
         <td className="px-4 py-3 font-mono text-purple-400 font-semibold">prompts</td>
-        <td className="px-4 py-3 text-muted-foreground">Reusable prompt templates with arguments</td>
-        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">summarize_document, code_review</td>
+        <td className="px-4 py-3 text-muted-foreground">Parameterized prompt templates</td>
+        <td className="px-4 py-3 font-mono text-muted-foreground text-xs">code_review(language="python")</td>
       </tr>
     </tbody>
   </table>
 </div>
 
 <ExamTip>
-The exam tests the distinction between `tools` and `resources`. Tools are for actions that may have side effects (writes, API calls, mutations). Resources are for read-only data retrieval. If you need to fetch a file for context, use a resource. If you need to write a file, use a tool.
+The exam tests tools vs. resources: **tools** have side effects (writes, mutations, API calls). **Resources** are read-only data. Need to fetch a file for context? Resource. Need to write a file? Tool.
 </ExamTip>
 
----
+### Adding a Resource
 
-## Transport Layer: JSON-RPC 2.0
+Resources let Claude pull data into context without a tool call:
 
-All MCP communication uses `JSON-RPC 2.0` — a lightweight remote procedure call protocol over a transport of your choice.
+```python
+# tells Claude what resources are available to read
+@app.list_resources()
+async def list_resources() -> list[types.Resource]:
+    return [
+        types.Resource(
+            uri="db://schema/public",   # URI Claude uses to request this resource
+            name="Database Schema",
+            mimeType="application/json",
+        )
+    ]
 
-```json
-// Client → Server: a tool call request
-{
-  "jsonrpc": "2.0",
-  "id": "req-001",
-  "method": "tools/call",
-  "params": {
-    "name": "search_issues",
-    "arguments": {
-      "query": "authentication bug",
-      "limit": 10
-    }
-  }
-}
-
-// Server → Client: the tool result
-{
-  "jsonrpc": "2.0",
-  "id": "req-001",
-  "result": {
-    "content": [
-      {
-        "type": "text",
-        "text": "[{\"id\": 42, \"title\": \"Auth token expiry bug\", \"status\": \"open\"}]"
-      }
-    ],
-    "isError": false
-  }
-}
+# called when Claude wants the content of a specific resource
+@app.read_resource()
+async def read_resource(uri: str) -> str:
+    if uri == "db://schema/public":
+        return get_db_schema_json()     # return raw content as a string
+    raise ValueError(f"Unknown resource: {uri}")
 ```
 
-### Transport Options
+### Adding a Prompt Template
 
-<div className="my-6 rounded-lg border border-border overflow-hidden text-sm">
-  <div className="px-4 py-2 border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground">MCP Transports</div>
-  <table className="w-full">
-    <thead>
-      <tr className="bg-purple-950/40 border-b border-border">
-        <th className="px-4 py-3 text-left font-semibold text-foreground">Transport</th>
-        <th className="px-4 py-3 text-left font-semibold text-foreground">When to use</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr className="border-b border-border hover:bg-muted/20">
-        <td className="px-4 py-3 text-muted-foreground font-medium">stdio</td>
-        <td className="px-4 py-3 text-muted-foreground">Local processes — Claude Code, CLI tools, scripts</td>
-      </tr>
-      <tr className="border-b border-border bg-muted/10 hover:bg-muted/20">
-        <td className="px-4 py-3 text-muted-foreground font-medium">HTTP + SSE</td>
-        <td className="px-4 py-3 text-muted-foreground">Remote servers, web services, cloud deployments</td>
-      </tr>
-      <tr className="hover:bg-muted/20">
-        <td className="px-4 py-3 text-muted-foreground font-medium">Custom</td>
-        <td className="px-4 py-3 text-muted-foreground">WebSockets, Unix sockets, embedded systems</td>
-      </tr>
-    </tbody>
-  </table>
-</div>
+```python
+# tells Claude what prompt templates exist
+@app.list_prompts()
+async def list_prompts() -> list[types.Prompt]:
+    return [
+        types.Prompt(
+            name="code_review",
+            description="Review code for bugs and style issues.",
+            arguments=[
+                types.PromptArgument(name="language", required=True),  # filled in at call time
+            ],
+        )
+    ]
 
-The transport is pluggable — the JSON-RPC layer above it is always the same.
-
----
-
-## The Initialize Handshake
-
-When a client connects to an MCP server, it begins with capability negotiation:
-
-```json
-// 1. Client announces its protocol version and capabilities
-{
-  "jsonrpc": "2.0",
-  "id": 0,
-  "method": "initialize",
-  "params": {
-    "protocolVersion": "2024-11-05",
-    "capabilities": {
-      "roots": { "listChanged": true },
-      "sampling": {}
-    },
-    "clientInfo": { "name": "claude-code", "version": "1.0.0" }
-  }
-}
-
-// 2. Server responds with its capabilities
-{
-  "jsonrpc": "2.0",
-  "id": 0,
-  "result": {
-    "protocolVersion": "2024-11-05",
-    "capabilities": {
-      "tools": { "listChanged": true },
-      "resources": { "subscribe": false, "listChanged": true },
-      "prompts": {}
-    },
-    "serverInfo": { "name": "github-mcp", "version": "2.1.0" }
-  }
-}
-
-// 3. Client sends initialized notification (no response expected)
-{
-  "jsonrpc": "2.0",
-  "method": "notifications/initialized"
-}
+# called when Claude (or the user) invokes a prompt template
+@app.get_prompt()
+async def get_prompt(name: str, arguments: dict) -> types.GetPromptResult:
+    lang = arguments["language"]  # e.g. "python", "typescript"
+    return types.GetPromptResult(
+        messages=[
+            types.PromptMessage(
+                role="user",
+                content=types.TextContent(
+                    type="text",
+                    text=f"Review the following {lang} code for bugs and improvements:",
+                ),
+            )
+        ]
+    )
 ```
 
-After the handshake, the client knows exactly which primitives the server supports and can call `tools/list`, `resources/list`, or `prompts/list` accordingly.
-
 ---
 
-## Tool Discovery: `tools/list`
+## Why All Three? A Code Review Assistant
 
-The client discovers available tools dynamically:
+Imagine you're building an MCP server for a GitHub code review assistant. Here's why you need all three primitives:
 
-```json
-// Request
-{ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }
+**The scenario:** A developer asks Claude — *"Review the open PR and leave comments on any bugs you find."*
 
-// Response — server describes its tools
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "tools": [
-      {
-        "name": "search_issues",
-        "description": "Search GitHub issues by keyword, label, or assignee. Returns up to 100 matching issues with title, number, status, and URL.",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "description": "Search terms — supports GitHub search syntax (e.g. 'is:open label:bug')"
+To do that, Claude needs to:
+1. Read the PR diff and file contents → **resource** (read-only, no side effects)
+2. Post review comments back to GitHub → **tool** (mutates state, has side effects)
+3. Apply a consistent review style every time → **prompt** (reusable template, not data or action)
+
+```python
+# ── RESOURCE: read the PR diff ──────────────────────────────────────────────
+# Claude loads this into context before deciding what to do.
+# It's read-only — fetching it doesn't change anything on GitHub.
+@app.list_resources()
+async def list_resources() -> list[types.Resource]:
+    return [
+        types.Resource(
+            uri="github://pulls/42/diff",  # Claude requests this URI to get the diff
+            name="PR #42 Diff",
+            mimeType="text/plain",
+        )
+    ]
+
+@app.read_resource()
+async def read_resource(uri: str) -> str:
+    pr_number = uri.split("/")[2]           # extract "42" from the URI
+    return github_api.get_pr_diff(pr_number) # returns the raw diff text
+
+
+# ── TOOL: post a review comment ──────────────────────────────────────────────
+# Claude calls this to take action. It writes to GitHub — a real side effect.
+# This can't be a resource because it mutates state.
+@app.list_tools()
+async def list_tools() -> list[types.Tool]:
+    return [
+        types.Tool(
+            name="post_review_comment",
+            description="Post an inline comment on a specific line of the PR.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "pr_number": {"type": "integer"},
+                    "file":      {"type": "string", "description": "File path"},
+                    "line":      {"type": "integer", "description": "Line number"},
+                    "comment":   {"type": "string", "description": "Review comment text"},
+                },
+                "required": ["pr_number", "file", "line", "comment"],
             },
-            "limit": {
-              "type": "integer",
-              "description": "Maximum results to return. Default 20, max 100.",
-              "default": 20
-            }
-          },
-          "required": ["query"]
-        }
-      }
+        )
     ]
-  }
-}
+
+@app.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    if name == "post_review_comment":
+        github_api.post_comment(**arguments)  # actually writes to GitHub
+        return [types.TextContent(type="text", text="Comment posted.")]
+
+
+# ── PROMPT: consistent review style ─────────────────────────────────────────
+# A reusable template that shapes HOW Claude reviews — not data, not an action.
+# Using a prompt (vs. putting instructions in the system prompt) means any
+# client can invoke this template by name, with their own arguments.
+@app.list_prompts()
+async def list_prompts() -> list[types.Prompt]:
+    return [
+        types.Prompt(
+            name="pr_review",
+            description="Review a PR diff for bugs, security issues, and style.",
+            arguments=[
+                types.PromptArgument(name="focus", required=False),  # e.g. "security" or "performance"
+            ],
+        )
+    ]
+
+@app.get_prompt()
+async def get_prompt(name: str, arguments: dict) -> types.GetPromptResult:
+    focus = arguments.get("focus", "general correctness")
+    return types.GetPromptResult(
+        messages=[
+            types.PromptMessage(
+                role="user",
+                content=types.TextContent(
+                    type="text",
+                    text=(
+                        f"Review this PR diff focusing on {focus}. "
+                        "For each issue found, call post_review_comment with the file, "
+                        "line number, and a clear explanation. Be specific and constructive."
+                    ),
+                ),
+            )
+        ]
+    )
 ```
 
-<Callout variant="info" title="Dynamic discovery is a key MCP advantage">
-Because Claude discovers tools at runtime via `tools/list`, you can update server-side tools without changing the client or redeploying Claude. Add a new tool on the server and it's immediately available.
-</Callout>
+Notice how each primitive has a different job:
+
+| | Resource | Tool | Prompt |
+|---|---|---|---|
+| **Reads data?** | Yes | Sometimes | No |
+| **Changes state?** | Never | Yes | No |
+| **Shapes behavior?** | No | No | Yes |
+| **In this example** | Fetch PR diff | Post comment | How to review |
+
+The rule of thumb: if Claude needs **information**, use a resource. If Claude needs to **do something**, use a tool. If you want Claude to **behave consistently**, use a prompt template.
 
 ---
 
-## Resource Access
+## Transports: stdio vs. HTTP
 
-Resources use URI addressing. A client fetches a resource by URI:
+| Transport | Use when |
+|-----------|----------|
+| **stdio** | Local process — Claude Code, CLI tools, scripts |
+| **HTTP + SSE** | Remote server, cloud deployment, shared service |
 
-```json
-// Discover available resources
-{ "jsonrpc": "2.0", "id": 2, "method": "resources/list" }
+The stdio server (shown above) is the simplest — Claude Code spawns your process and communicates over stdin/stdout. For a remote HTTP server:
 
-// Response
-{
-  "result": {
-    "resources": [
-      {
-        "uri": "file:///project/README.md",
-        "name": "Project README",
-        "mimeType": "text/markdown"
-      },
-      {
-        "uri": "db://schema/public",
-        "name": "Database Schema",
-        "mimeType": "application/json"
-      }
-    ]
-  }
-}
+```python
+from mcp.server.sse import SseServerTransport
+from starlette.applications import Starlette
 
-// Fetch a specific resource
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "method": "resources/read",
-  "params": { "uri": "file:///project/README.md" }
-}
+transport = SseServerTransport("/messages")              # SSE endpoint path
+starlette_app = Starlette(routes=transport.routes(app)) # wrap your MCP app in a web server
+# deploy like any web app — uvicorn, gunicorn, etc.
 ```
 
 ---
 
-## MCP in the Claude Ecosystem
+## What Claude Actually Sees
+
+Claude never sees JSON-RPC messages. The MCP client handles the protocol. Claude only sees the tool schema — name, description, and input shape — and decides when to call it based on context.
 
 ```
-┌─────────────────────────────────────┐
-│           Host Application          │
-│  (Claude Code / custom agent)       │
-│                                     │
-│  ┌──────────┐    ┌───────────────┐  │
-│  │  Claude  │◄──►│  MCP Client   │  │
-│  │  Model   │    │  (built-in)   │  │
-│  └──────────┘    └───────┬───────┘  │
-└────────────────────────┼────────────┘
-                          │ JSON-RPC / stdio or HTTP
-          ┌───────────────┼───────────────┐
-          │               │               │
-    ┌─────▼─────┐   ┌─────▼─────┐  ┌─────▼─────┐
-    │  GitHub   │   │ Postgres  │  │  Custom   │
-    │MCP Server │   │MCP Server │  │MCP Server │
-    └───────────┘   └───────────┘  └───────────┘
+Your MCP server
+    ↕  JSON-RPC over stdio / HTTP
+MCP client  (built into Claude Code)
+    ↕  tool schemas + results
+Claude model
 ```
-
-The host application manages MCP client connections. Claude itself only sees the tool definitions that the MCP client surfaces — it does not communicate with MCP servers directly.
 
 <ExamTip>
-The exam tests the layering: Claude sees `tool schemas` (JSON), not MCP protocol details. The MCP client handles JSON-RPC, transport, and capability negotiation. Claude just calls tools by name with arguments.
+Claude sees tool schemas, not protocol details. The MCP client handles capability negotiation, JSON-RPC framing, and transport. Claude just calls tools by name.
 </ExamTip>
 
 <AntiPatternCard
-  title="Treating MCP servers as REST APIs"
+  title="Designing MCP tools like REST endpoints"
   wrong={
     <>
-      <p>Designing MCP tools that mirror HTTP endpoints 1:1:</p>
-      <pre><code>{`# BAD: too granular, forces Claude to chain many calls
-tools: [
-  get_user_by_id,        # GET /users/{id}
-  list_user_orders,      # GET /users/{id}/orders
-  get_order_by_id,       # GET /orders/{id}
-  list_order_items,      # GET /orders/{id}/items
-]
-# Claude needs 4 tool calls to answer "what did user 5 order recently?"`}</code></pre>
+      <p>One tool per CRUD operation forces Claude to chain many calls:</p>
+      <pre><code>{`tools: [get_user, list_user_orders, get_order, list_order_items]
+# 4 calls to answer: "what did user 5 order recently?"`}</code></pre>
     </>
   }
   right={
     <>
-      <p>Design tools around agent tasks, not data models:</p>
-      <pre><code>{`# GOOD: task-oriented, fewer round trips
-tools: [
-  get_user_with_recent_orders,  # Returns user + last N orders in one call
-  get_order_details,            # Returns order + all items in one call
-]
-# Claude answers "what did user 5 order recently?" in 1-2 calls`}</code></pre>
+      <p>Design tools around what Claude needs to accomplish:</p>
+      <pre><code>{`tools: [get_user_with_recent_orders, get_order_details]
+# 1–2 calls to answer the same question`}</code></pre>
     </>
   }
-  explanation="MCP tools should be designed for the tasks agents perform, not for CRUD operations on your data model. Minimize tool call round trips."
+  explanation="MCP tools should be task-oriented, not data-model-oriented. Fewer round trips = faster, cheaper, more reliable agents."
 />
 
 <KeyTakeaway>
-- MCP standardizes AI-to-system communication via JSON-RPC 2.0 over pluggable transports
-- Three primitives: `tools` (actions with side effects), `resources` (read-only data), `prompts` (reusable templates)
-- Initialize handshake negotiates capabilities before any tool calls
-- `tools/list` enables dynamic discovery — add server-side tools without client changes
-- Claude sees tool schemas only; MCP client handles all protocol details
-- Design tools around agent tasks, not data model CRUD operations
+- An MCP server is a process that exposes tools, resources, and/or prompts over JSON-RPC
+- Three primitives: `tools` (actions with side effects), `resources` (read-only context), `prompts` (templates)
+- Connect to Claude Code via `claude_desktop_config.json` or `.mcp.json` — no client code needed
+- Use **stdio** for local processes, **HTTP+SSE** for remote servers
+- Claude sees only tool schemas — the MCP client handles all protocol details
+- Design tools around agent tasks, not CRUD operations
 </KeyTakeaway>

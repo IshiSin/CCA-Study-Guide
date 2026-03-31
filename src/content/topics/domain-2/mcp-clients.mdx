@@ -17,29 +17,25 @@ from mcp.client.stdio import stdio_client
 import asyncio
 
 async def connect_and_call():
-    # Define how to start the server process
+    # Tell the client how to spawn the server process
     server_params = StdioServerParameters(
         command="python",
         args=["path/to/my_server.py"],
-        env={"DATABASE_URL": "postgresql://localhost/mydb"}  # optional env vars
+        env={"DATABASE_URL": "postgresql://localhost/mydb"}
     )
 
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
-            # 1. Initialize — performs the capability handshake
-            await session.initialize()
+            await session.initialize()             # capability handshake
 
-            # 2. Discover available tools
-            tools_response = await session.list_tools()
-            print("Available tools:", [t.name for t in tools_response.tools])
+            tools = await session.list_tools()     # discover what the server exposes
+            print("Tools:", [t.name for t in tools.tools])
 
-            # 3. Call a tool
             result = await session.call_tool(
                 "search_issues",
                 arguments={"query": "authentication bug", "limit": 5}
             )
 
-            # 4. Handle the result
             for content in result.content:
                 if content.type == "text":
                     print(content.text)
@@ -58,68 +54,49 @@ from mcp.client.stdio import stdio_client
 
 async def agent_with_mcp_tools(user_message: str):
     client = anthropic.Anthropic()
-
-    server_params = StdioServerParameters(
-        command="python", args=["tools/github_server.py"]
-    )
+    server_params = StdioServerParameters(command="python", args=["tools/github_server.py"])
 
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
 
-            # Discover MCP tools
+            # Discover tools and convert to Anthropic API format
             mcp_tools = (await session.list_tools()).tools
-
-            # Convert MCP tool schemas → Anthropic API tool format
             anthropic_tools = [
                 {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "input_schema": tool.inputSchema,
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": t.inputSchema,  # note: inputSchema → input_schema
                 }
-                for tool in mcp_tools
+                for t in mcp_tools
             ]
 
-            # First Claude turn
             messages = [{"role": "user", "content": user_message}]
             response = client.messages.create(
-                model="claude-opus-4-5",
-                max_tokens=4096,
-                tools=anthropic_tools,
-                messages=messages,
+                model="claude-opus-4-6", max_tokens=4096,
+                tools=anthropic_tools, messages=messages,
             )
 
-            # Agentic loop: handle tool calls
+            # Agentic loop: keep going until Claude stops calling tools
             while response.stop_reason == "tool_use":
                 tool_results = []
-
                 for block in response.content:
                     if block.type == "tool_use":
-                        # Execute tool via MCP session
-                        mcp_result = await session.call_tool(
-                            block.name,
-                            arguments=block.input
-                        )
-
-                        # Collect results
+                        mcp_result = await session.call_tool(block.name, arguments=block.input)
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
-                            "content": mcp_result.content[0].text
-                                        if mcp_result.content else "",
+                            "content": mcp_result.content[0].text if mcp_result.content else "",
                         })
 
-                # Continue the conversation
-                messages = [
-                    {"role": "user", "content": user_message},
+                # Append assistant turn + tool results, then continue
+                messages += [
                     {"role": "assistant", "content": response.content},
-                    {"role": "user", "content": tool_results},
+                    {"role": "user",      "content": tool_results},
                 ]
                 response = client.messages.create(
-                    model="claude-opus-4-5",
-                    max_tokens=4096,
-                    tools=anthropic_tools,
-                    messages=messages,
+                    model="claude-opus-4-6", max_tokens=4096,
+                    tools=anthropic_tools, messages=messages,
                 )
 
             return response.content[0].text
@@ -140,12 +117,10 @@ from mcp.client.sse import sse_client
 from mcp import ClientSession
 
 async def connect_to_remote_server():
-    # Connect to a remote MCP server via HTTP + SSE
+    # Same ClientSession API regardless of transport — only the connection differs
     async with sse_client("https://tools.example.com/mcp") as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-
-            # Same API as stdio — transport is transparent
             tools = await session.list_tools()
             result = await session.call_tool("run_analysis", {"dataset": "q4_sales"})
 ```
@@ -160,14 +135,13 @@ Real agents often connect to several MCP servers simultaneously. Merge their too
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from dataclasses import dataclass
-import asyncio
 
 @dataclass
 class ManagedTool:
     name: str
     description: str
     input_schema: dict
-    session: ClientSession  # Which session handles this tool
+    session: ClientSession   # which session handles calls for this tool
 
 class MultiServerMCPClient:
     def __init__(self):
@@ -175,8 +149,8 @@ class MultiServerMCPClient:
         self._sessions: list[ClientSession] = []
         self._contexts: list = []
 
-    async def add_server(self, server_params: StdioServerParameters):
-        ctx = stdio_client(server_params)
+    async def add_server(self, params: StdioServerParameters):
+        ctx = stdio_client(params)
         streams = await ctx.__aenter__()
         self._contexts.append(ctx)
 
@@ -185,17 +159,13 @@ class MultiServerMCPClient:
         await session.initialize()
         self._sessions.append(session)
 
-        # Register all tools from this server
-        tool_list = await session.list_tools()
-        for tool in tool_list.tools:
-            if tool.name in self.tools:
-                # Handle name collision — prefix with server name
-                unique_name = f"{server_params.args[-1].split('/')[-1]}_{tool.name}"
-            else:
-                unique_name = tool.name
-
-            self.tools[unique_name] = ManagedTool(
-                name=unique_name,
+        for tool in (await session.list_tools()).tools:
+            name = tool.name
+            # Prefix with server script name to avoid collisions across servers
+            if name in self.tools:
+                name = f"{params.args[-1].split('/')[-1]}_{name}"
+            self.tools[name] = ManagedTool(
+                name=name,
                 description=tool.description or "",
                 input_schema=tool.inputSchema,
                 session=session,
@@ -203,45 +173,18 @@ class MultiServerMCPClient:
 
     def get_anthropic_tools(self) -> list[dict]:
         """Convert all registered tools to Anthropic API format."""
-        return [
-            {
-                "name": t.name,
-                "description": t.description,
-                "input_schema": t.input_schema,
-            }
-            for t in self.tools.values()
-        ]
+        return [{"name": t.name, "description": t.description, "input_schema": t.input_schema}
+                for t in self.tools.values()]
 
     async def call_tool(self, tool_name: str, arguments: dict) -> str:
         if tool_name not in self.tools:
             raise ValueError(f"Unknown tool: {tool_name}")
-        managed = self.tools[tool_name]
-        result = await managed.session.call_tool(tool_name, arguments=arguments)
+        result = await self.tools[tool_name].session.call_tool(tool_name, arguments=arguments)
         return result.content[0].text if result.content else ""
 
     async def close(self):
-        for session in self._sessions:
-            await session.__aexit__(None, None, None)
-        for ctx in self._contexts:
-            await ctx.__aexit__(None, None, None)
-
-
-# Usage
-async def main():
-    mcp = MultiServerMCPClient()
-
-    await mcp.add_server(StdioServerParameters(
-        command="python", args=["servers/github_server.py"]
-    ))
-    await mcp.add_server(StdioServerParameters(
-        command="python", args=["servers/database_server.py"]
-    ))
-
-    tools = mcp.get_anthropic_tools()
-    print(f"Total tools available: {len(tools)}")
-
-    result = await mcp.call_tool("search_issues", {"query": "bug"})
-    await mcp.close()
+        for s in self._sessions: await s.__aexit__(None, None, None)
+        for c in self._contexts:  await c.__aexit__(None, None, None)
 ```
 
 <Callout variant="warning" title="Tool name collisions across servers">
@@ -254,28 +197,24 @@ When two servers expose a tool with the same name, you must resolve the collisio
 
 ```python
 async def load_resource_into_context(session: ClientSession, uri: str) -> str:
-    """Fetch a resource and return its content for injection into Claude's context."""
+    """Fetch a resource and return its text content."""
     resource = await session.read_resource(uri)
-    # Resources return a list of content items (text, blob, etc.)
     for item in resource.contents:
         if hasattr(item, "text"):
             return item.text
     return ""
 
-# Example: inject documentation into the system prompt
 async def agent_with_resource_context(user_question: str):
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
 
-            # Load a resource to use as context
-            api_docs = await load_resource_into_context(
-                session, "docs://api-reference"
-            )
+            # Inject API docs into the system prompt as context
+            api_docs = await load_resource_into_context(session, "docs://api-reference")
 
             client = anthropic.Anthropic()
             response = client.messages.create(
-                model="claude-opus-4-5",
+                model="claude-opus-4-6",
                 max_tokens=4096,
                 system=f"You are a helpful assistant.\n\nAPI Reference:\n{api_docs}",
                 messages=[{"role": "user", "content": user_question}]

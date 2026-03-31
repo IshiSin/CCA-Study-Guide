@@ -9,32 +9,58 @@ Production agents fail. Tools return errors, models time out, subagents produce 
 
 ## The Three Failure Propagation Levels
 
-<MermaidDiagram chart={`flowchart TD
-    User["👤 User"] <-->|"Meaningful error or\npartial result"| Coord
+<div className="my-6 rounded-lg border border-slate-700 bg-slate-900 p-6">
+  <p className="mb-4 text-center text-sm font-semibold text-slate-400 uppercase tracking-widest">Error propagation: subagent → coordinator → user</p>
+  <svg viewBox="0 0 520 300" xmlns="http://www.w3.org/2000/svg" className="w-full max-w-xl mx-auto" aria-label="Three failure propagation levels diagram">
+    <defs>
+      <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="#94a3b8" />
+      </marker>
+    </defs>
 
-    subgraph Coordinator ["Coordinator Agent"]
-        Coord["Decides: retry,\ndegrade, or escalate"]
-    end
+    {/* User */}
+    <rect x="200" y="10" width="120" height="44" rx="8" fill="#1e293b" stroke="#6470f3" strokeWidth="1.5"/>
+    <text x="260" y="37" textAnchor="middle" fill="#e2e8f0" fontSize="13" fontFamily="sans-serif">User</text>
 
-    subgraph Subagents ["Subagents"]
-        A["Subagent A\n✅ Success"]
-        B["Subagent B\n❌ Fails with\nstructured error"]
-        C["Subagent C\n⚠️ Partial result"]
-    end
+    {/* User <-> Coordinator arrows */}
+    <line x1="260" y1="54" x2="260" y2="106" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)"/>
+    <line x1="250" y1="106" x2="250" y2="54" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)"/>
+    <text x="275" y="84" fill="#64748b" fontSize="10" fontFamily="sans-serif">error / result</text>
 
-    Coord --> A
-    Coord --> B
-    Coord --> C
-    A -->|"result"| Coord
-    B -->|"StructuredError\n{code, message, retryable}"| Coord
-    C -->|"PartialResult\n{data, missing_fields}"| Coord
+    {/* Coordinator */}
+    <rect x="160" y="110" width="200" height="52" rx="8" fill="#1e1f52" stroke="#6470f3" strokeWidth="1.5"/>
+    <text x="260" y="131" textAnchor="middle" fill="#e2e8f0" fontSize="12" fontFamily="sans-serif" fontWeight="bold">Coordinator Agent</text>
+    <text x="260" y="149" textAnchor="middle" fill="#a5b4fc" fontSize="11" fontFamily="sans-serif">retry / degrade / escalate</text>
 
-    style Coordinator fill:#1e1f52,stroke:#6470f3,color:#e6edf3
-    style Subagents fill:#0f172a,stroke:#334155,color:#e6edf3
-    style B fill:#450a0a,stroke:#ef4444,color:#e6edf3
-    style C fill:#451a03,stroke:#f97316,color:#e6edf3`}
-  title="Error propagation: subagent → coordinator → user"
-/>
+    {/* Coordinator -> Subagent arrows */}
+    <line x1="180" y1="162" x2="80" y2="214" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)"/>
+    <line x1="260" y1="162" x2="260" y2="214" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)"/>
+    <line x1="340" y1="162" x2="440" y2="214" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)"/>
+
+    {/* Subagent A — success */}
+    <rect x="20" y="218" width="120" height="54" rx="8" fill="#052e16" stroke="#22c55e" strokeWidth="1.5"/>
+    <text x="80" y="239" textAnchor="middle" fill="#e2e8f0" fontSize="11" fontFamily="sans-serif" fontWeight="bold">Subagent A</text>
+    <text x="80" y="256" textAnchor="middle" fill="#4ade80" fontSize="11" fontFamily="sans-serif">Success</text>
+    <text x="80" y="268" textAnchor="middle" fill="#86efac" fontSize="10" fontFamily="sans-serif">result</text>
+
+    {/* Subagent B — error */}
+    <rect x="200" y="218" width="120" height="54" rx="8" fill="#450a0a" stroke="#ef4444" strokeWidth="1.5"/>
+    <text x="260" y="239" textAnchor="middle" fill="#e2e8f0" fontSize="11" fontFamily="sans-serif" fontWeight="bold">Subagent B</text>
+    <text x="260" y="256" textAnchor="middle" fill="#f87171" fontSize="11" fontFamily="sans-serif">Fails</text>
+    <text x="260" y="268" textAnchor="middle" fill="#fca5a5" fontSize="10" fontFamily="sans-serif">StructuredError</text>
+
+    {/* Subagent C — partial */}
+    <rect x="380" y="218" width="120" height="54" rx="8" fill="#431407" stroke="#f97316" strokeWidth="1.5"/>
+    <text x="440" y="239" textAnchor="middle" fill="#e2e8f0" fontSize="11" fontFamily="sans-serif" fontWeight="bold">Subagent C</text>
+    <text x="440" y="256" textAnchor="middle" fill="#fb923c" fontSize="11" fontFamily="sans-serif">Partial</text>
+    <text x="440" y="268" textAnchor="middle" fill="#fdba74" fontSize="10" fontFamily="sans-serif">PartialResult</text>
+
+    {/* Return arrows */}
+    <line x1="80" y1="218" x2="190" y2="166" stroke="#22c55e" strokeWidth="1.2" strokeDasharray="4 3" markerEnd="url(#arrow)"/>
+    <line x1="260" y1="218" x2="260" y2="166" stroke="#ef4444" strokeWidth="1.2" strokeDasharray="4 3" markerEnd="url(#arrow)"/>
+    <line x1="440" y1="218" x2="330" y2="166" stroke="#f97316" strokeWidth="1.2" strokeDasharray="4 3" markerEnd="url(#arrow)"/>
+  </svg>
+</div>
 
 ---
 
@@ -43,58 +69,17 @@ Production agents fail. Tools return errors, models time out, subagents produce 
 Tools and subagents should return `structured errors` — not bare exceptions and not silent failures. The coordinator needs enough information to decide whether to retry, degrade, or escalate.
 
 ```python
-from dataclasses import dataclass
-from typing import Any
-
-@dataclass
-class ToolResult:
-    success: bool
-    data: Any = None
-    error_code: str | None = None
-    error_message: str | None = None
-    retryable: bool = False
-    partial_data: Any = None  # If partial success
-
-    def to_json(self) -> str:
-        import json
-        return json.dumps({
-            "success": self.success,
-            "data": self.data,
-            "error_code": self.error_code,
-            "error_message": self.error_message,
-            "retryable": self.retryable,
-            "partial_data": self.partial_data,
-        })
-
-
-# Tool implementation returning structured errors
 @tool
 def fetch_stock_price(ticker: str) -> str:
-    """Fetch current stock price for a ticker symbol."""
     try:
         price = external_api.get_price(ticker)
-        return ToolResult(success=True, data={"ticker": ticker, "price": price}).to_json()
+        return json.dumps({"success": True, "data": {"ticker": ticker, "price": price}})
     except RateLimitError as e:
-        return ToolResult(
-            success=False,
-            error_code="RATE_LIMITED",
-            error_message=str(e),
-            retryable=True,          # Tell coordinator: worth retrying
-        ).to_json()
+        return json.dumps({"success": False, "error_code": "RATE_LIMITED",
+                           "error_message": str(e), "retryable": True})
     except TickerNotFoundError:
-        return ToolResult(
-            success=False,
-            error_code="TICKER_NOT_FOUND",
-            error_message=f"No data found for ticker: {ticker}",
-            retryable=False,         # Tell coordinator: don't bother retrying
-        ).to_json()
-    except Exception as e:
-        return ToolResult(
-            success=False,
-            error_code="UNKNOWN_ERROR",
-            error_message=f"Unexpected error: {str(e)[:200]}",
-            retryable=True,
-        ).to_json()
+        return json.dumps({"success": False, "error_code": "TICKER_NOT_FOUND",
+                           "error_message": f"No data for {ticker}", "retryable": False})
 ```
 
 ---
@@ -104,43 +89,14 @@ def fetch_stock_price(ticker: str) -> str:
 Transient failures (rate limits, timeouts, network errors) warrant retries. Always use exponential backoff with jitter to avoid thundering herd.
 
 ```python
-import time
-import random
-
-def retry_with_backoff(
-    fn,
-    max_retries: int = 3,
-    base_delay: float = 1.0,
-    max_delay: float = 30.0,
-    retryable_codes: set[str] = frozenset({"RATE_LIMITED", "TIMEOUT", "UNKNOWN_ERROR"}),
-):
-    """
-    Retry a function with exponential backoff.
-    Only retries if the error code is in retryable_codes.
-    """
-    import json
-
+def retry_with_backoff(fn, max_retries=3, base_delay=1.0):
     for attempt in range(max_retries + 1):
-        result_json = fn()
-        result = json.loads(result_json)
-
+        result = json.loads(fn())
         if result["success"]:
-            return result_json
-
-        error_code = result.get("error_code", "UNKNOWN")
-
-        if not result.get("retryable", False) or error_code not in retryable_codes:
-            # Non-retryable error — fail fast
-            raise RuntimeError(f"Non-retryable error: {error_code}: {result.get('error_message')}")
-
-        if attempt == max_retries:
-            raise RuntimeError(
-                f"Failed after {max_retries} retries. Last error: {error_code}"
-            )
-
-        # Exponential backoff with jitter
-        delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
-        print(f"Attempt {attempt + 1} failed ({error_code}). Retrying in {delay:.1f}s...")
+            return result
+        if not result.get("retryable") or attempt == max_retries:
+            raise RuntimeError(result.get("error_code"))
+        delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
         time.sleep(delay)
 ```
 
@@ -151,84 +107,25 @@ def retry_with_backoff(
 The coordinator must handle subagent failures gracefully — deciding whether to retry, use a degraded result, or escalate to the user.
 
 ```python
-from enum import Enum
+# RecoveryStrategy: RETRY | DEGRADE | SKIP | ESCALATE | ABORT
 
-class RecoveryStrategy(Enum):
-    RETRY = "retry"
-    DEGRADE = "degrade"       # Use partial result
-    SKIP = "skip"             # Skip optional subtask
-    ESCALATE = "escalate"     # Return error to user
-    ABORT = "abort"           # Stop entire workflow
-
-def coordinator_with_recovery(goal: str, subtasks: list[dict]) -> dict:
-    results = {}
-    failures = []
-
+def coordinator_with_recovery(subtasks):
+    results, failures = {}, []
     for task in subtasks:
         for attempt in range(3):
             try:
-                result = run_subagent(
-                    task_spec=task["description"],
-                    context_data={k: results[k] for k in task.get("needs", []) if k in results},
-                )
-                results[task["id"]] = result
-                break  # Success
-
+                results[task["id"]] = run_subagent(task["description"])
+                break
             except Exception as e:
-                error_info = {
-                    "task_id": task["id"],
-                    "attempt": attempt + 1,
-                    "error": str(e),
-                }
-
-                strategy = decide_recovery_strategy(task, error_info, attempt)
-
-                if strategy == RecoveryStrategy.RETRY and attempt < 2:
-                    time.sleep(2 ** attempt)
-                    continue
-
-                elif strategy == RecoveryStrategy.DEGRADE:
-                    results[task["id"]] = f"[PARTIAL: {str(e)[:100]}]"
-                    failures.append(error_info)
-                    break
-
-                elif strategy == RecoveryStrategy.SKIP:
-                    # Task is optional — continue without it
-                    failures.append({**error_info, "skipped": True})
-                    break
-
-                elif strategy in (RecoveryStrategy.ESCALATE, RecoveryStrategy.ABORT):
-                    raise RuntimeError(
-                        f"Critical task '{task['id']}' failed: {str(e)}"
-                    ) from e
-
-    return {
-        "results": results,
-        "complete": len(failures) == 0,
-        "failures": failures,
-        "degraded": len(failures) > 0,
-    }
-
-
-def decide_recovery_strategy(
-    task: dict,
-    error_info: dict,
-    attempt: int,
-) -> RecoveryStrategy:
-    """Decide recovery strategy based on task criticality and error type."""
-    is_critical = task.get("critical", False)
-    is_last_attempt = attempt >= 2
-
-    if not is_last_attempt:
-        return RecoveryStrategy.RETRY
-
-    if is_critical:
-        return RecoveryStrategy.ESCALATE
-
-    if task.get("optional", False):
-        return RecoveryStrategy.SKIP
-
-    return RecoveryStrategy.DEGRADE
+                if attempt < 2:
+                    time.sleep(2 ** attempt); continue
+                if task.get("critical"):
+                    raise RuntimeError(f"Critical task failed: {e}") from e
+                if task.get("optional"):
+                    failures.append({"task": task["id"], "skipped": True}); break
+                results[task["id"]] = f"[PARTIAL: {e}]"
+                failures.append({"task": task["id"], "error": str(e)}); break
+    return {"results": results, "degraded": bool(failures), "failures": failures}
 ```
 
 ---
@@ -241,21 +138,11 @@ When escalating to the user, include actionable context — not just "something 
 @dataclass
 class AgentError:
     code: str
-    message: str                    # Human-readable
+    message: str
     failed_task: str | None = None
     completed_tasks: list = None
     partial_result: str | None = None
     suggested_action: str | None = None
-
-    def to_user_message(self) -> str:
-        parts = [f"**{self.message}**"]
-        if self.partial_result:
-            parts.append(f"\nPartial result available: {self.partial_result}")
-        if self.completed_tasks:
-            parts.append(f"\nCompleted: {', '.join(self.completed_tasks)}")
-        if self.suggested_action:
-            parts.append(f"\nSuggested: {self.suggested_action}")
-        return "\n".join(parts)
 ```
 
 <AntiPatternCard

@@ -100,13 +100,13 @@ The exam tests the three output formats and their use cases. The key distinction
 ## Controlling Turns and Context
 
 ```bash
-# Limit how many back-and-forth turns Claude takes
+# --max-turns prevents runaway loops in automated contexts
 claude -p "Fix the failing tests" --max-turns 5
 
-# Pipe in additional context via stdin
+# Pipe stdin to provide additional context (diff, logs, etc.)
 git diff HEAD~1 | claude -p "Summarize these changes as a changelog entry"
 
-# Combine: pipe context + limit turns + JSON output
+# Combine: piped context + turn limit + structured output for downstream parsing
 cat error.log | claude -p "Identify the root cause of these errors" \
   --max-turns 3 \
   --output-format json
@@ -119,15 +119,15 @@ cat error.log | claude -p "Identify the root cause of these errors" \
 By default, Claude Code asks for confirmation before running tools with side effects. In CI, there is no user to confirm. Use `--allowedTools` to grant permissions upfront:
 
 ```bash
-# Allow only read operations — safe for analysis tasks
+# Analysis only — no file modifications possible
 claude -p "Audit the codebase for hardcoded secrets" \
   --allowedTools "Read,Glob,Grep"
 
-# Allow read + bash for running tests
+# Add Bash to let Claude run the test suite
 claude -p "Run the test suite and report which tests are flaky" \
   --allowedTools "Read,Glob,Grep,Bash"
 
-# Allow file editing for automated fixes
+# Add Edit to let Claude modify files for auto-fix tasks
 claude -p "Fix all ESLint errors in src/" \
   --allowedTools "Read,Glob,Grep,Edit,Bash"
 ```
@@ -213,6 +213,7 @@ In GitHub Actions, store the API key as a repository secret (`ANTHROPIC_API_KEY`
 ### Automated Code Review on PR
 
 ```bash
+# Pipe the diff as stdin context; output findings as JSON for downstream processing
 claude -p "$(cat <<'EOF'
 Review the following diff for:
 1. Bugs and logic errors
@@ -228,7 +229,7 @@ EOF
 ### Auto-fix Linting Errors
 
 ```bash
-# Run linter, capture output, let Claude fix it
+# Capture linter output and pipe it as context; Claude edits files directly
 npm run lint 2>&1 | claude -p "Fix all the ESLint errors listed above.
   Do not change any logic — only fix linting violations." \
   --allowedTools "Read,Edit,Glob" \
@@ -238,6 +239,7 @@ npm run lint 2>&1 | claude -p "Fix all the ESLint errors listed above.
 ### Generate Release Notes
 
 ```bash
+# git log provides context via pipe; result written to file via redirect
 git log v1.2.0..HEAD --oneline | claude -p "Convert these git commits into
   user-facing release notes. Group by: Features, Bug Fixes, Performance.
   Use plain English, not technical jargon." \
@@ -247,6 +249,7 @@ git log v1.2.0..HEAD --oneline | claude -p "Convert these git commits into
 ### Dependency Audit
 
 ```bash
+# npm audit JSON provides structured context; Claude explains and prioritizes fixes
 npm audit --json | claude -p "Analyze these npm audit results.
   For each vulnerability: assess real exploitability in a Node.js API server,
   recommend whether to fix now or defer, and if fixing, provide the exact command." \
@@ -259,15 +262,14 @@ npm audit --json | claude -p "Analyze these npm audit results.
 ## Exit Codes and Error Handling
 
 ```bash
-# Check exit code for pipeline integration
 claude -p "Run the test suite and confirm all tests pass" \
   --allowedTools "Bash" \
   --output-format json
-EXIT_CODE=$?
+EXIT_CODE=$?   # 0 = success, 1 = Claude encountered an error
 
 if [ $EXIT_CODE -ne 0 ]; then
   echo "Claude Code failed with exit code $EXIT_CODE"
-  exit 1
+  exit 1   # propagate failure to CI — marks the pipeline step as failed
 fi
 ```
 
